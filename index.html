@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Radar MEL">
 <title>Radar MEL</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
@@ -59,7 +59,17 @@ h2{font-family:var(--f-display);font-weight:600;font-size:21px;line-height:1.1;m
 .mapleg{position:absolute;z-index:500;left:10px;bottom:22px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:11px;color:var(--muted);display:grid;gap:4px}
 .mapleg .ramp{height:8px;width:150px;border-radius:4px}
 .mapleg .lab{display:flex;justify-content:space-between}
-.locbtn{position:absolute;z-index:500;right:10px;bottom:22px}
+.maptools{position:absolute;z-index:500;right:10px;bottom:44px;display:flex;gap:6px}
+details.srcbox{background:var(--surface);border-bottom:1px solid var(--line);padding-block:6px}
+details.srcbox summary{cursor:pointer;font-size:13px;color:var(--muted);list-style:none;display:flex;align-items:center;gap:8px;min-height:32px}
+details.srcbox summary::-webkit-details-marker{display:none}
+details.srcbox summary::after{content:"▾";font-size:11px}
+details.srcbox[open] summary::after{content:"▴"}
+details.srcbox summary i{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+details.srcbox summary.warn i{background:var(--bad)}
+details.srcbox .srcs{border:0;padding-block:6px 4px}
+.maptools .btn{box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.maptools .btn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 
 .side{display:grid;gap:14px;padding-block:14px 40px;min-width:0}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px;min-width:0}
@@ -109,8 +119,10 @@ ol.top .km{font-family:var(--f-data);font-size:12px;color:var(--muted)}
 .method ul{margin:0;padding-left:18px;display:grid;gap:5px;font-size:13px}
 .method a{color:var(--accent)}
 .err{color:var(--bad);font-size:13px;margin:0}
-.leaflet-container{font-family:var(--f-body)}
-.dark-map .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}
+.maplibregl-map{font-family:var(--f-body)}
+.maplibregl-ctrl-group{border-radius:10px!important;box-shadow:0 2px 8px rgba(0,0,0,.18)!important}
+.maplibregl-ctrl-attrib{font-size:10px}
+.me{width:16px;height:16px;border-radius:50%;background:#2F62A8;border:3px solid #fff;box-shadow:0 0 0 6px rgba(47,98,168,.25)}
 </style>
 </head>
 <body>
@@ -124,14 +136,14 @@ ol.top .km{font-family:var(--f-data);font-size:12px;color:var(--muted)}
     <button type="button" class="btn" id="refreshBtn">Actualiser</button>
   </div>
 </header>
-<div class="srcs gut" id="srcs" aria-label="Sources de données"></div>
+<details class="srcbox gut"><summary id="srcSum"><i></i>Sources en cours de chargement</summary><div class="srcs" id="srcs" aria-label="Sources de données"></div></details>
 
 <div class="layout">
   <div class="mapcol">
     <div id="map" role="application" aria-label="Carte des secteurs H3"></div>
     <div class="slots" role="tablist" id="slots"></div>
     <div class="mapleg" aria-hidden="true"><div class="ramp" id="ramp"></div><div class="lab"><span>Calme</span><span>Forte</span><span>Majoration</span></div></div>
-    <button type="button" class="btn locbtn" id="locBtn">Ma position</button>
+    <div class="maptools"><button type="button" class="btn" id="btn3d" aria-pressed="false">Relief 3D</button><button type="button" class="btn" id="locBtn">Ma position</button></div>
   </div>
 
   <main class="side gut">
@@ -175,12 +187,12 @@ ol.top .km{font-family:var(--f-data);font-size:12px;color:var(--muted)}
         <li><b>Score</b> = demande estimée × multiplicateurs (pluie, panne de métro, majoration signalée) ÷ chauffeurs disponibles estimés. Chaque terme est affiché avec sa valeur.</li>
         <li><b>Limites</b> : Uber et Bolt ne publient ni leurs demandes ni le nombre de chauffeurs connectés, et la SNCF ne publie pas le remplissage des trains. Les voyageurs sont estimés à partir du type de train (places × 70 % en TGV, 35 % en TER, dont 40 % qui descendent quand Lille n'est pas le terminus). Le score reste une estimation, pas une mesure exacte.</li>
       </ul>
-      <p class="hint">Données : <a href="https://data.lillemetropole.fr/" target="_blank" rel="noopener">MEL open data</a>, <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>, <a href="https://numerique.sncf.com/" target="_blank" rel="noopener">SNCF</a>, <a href="https://www.data.gouv.fr/" target="_blank" rel="noopener">data.gouv.fr</a>. Grille <a href="https://h3geo.org/" target="_blank" rel="noopener">H3</a> (Uber, open source). Fond de carte © OpenStreetMap.</p>
+      <p class="hint">Données : <a href="https://data.lillemetropole.fr/" target="_blank" rel="noopener">MEL open data</a>, <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>, <a href="https://numerique.sncf.com/" target="_blank" rel="noopener">SNCF</a>, <a href="https://www.data.gouv.fr/" target="_blank" rel="noopener">data.gouv.fr</a>. Grille <a href="https://h3geo.org/" target="_blank" rel="noopener">H3</a> (Uber, open source). Fond de carte © <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>, © OpenStreetMap.</p>
     </section>
   </main>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/h3-js@4.1.0/dist/h3-js.umd.js"></script>
 <script>
 (function(){
@@ -368,7 +380,7 @@ const AUTO={ilevia:'',cancel:{},jam:1,jamTxt:'',chargeF:1,chargeTxt:'',roadsOk:f
 const ROAD_ANCHORS={A1:['gares','euralille','fives','chu','lesquin'],A22:['roubaix','tourcoing','marcq','v2','madeleine'],A23:['vda','fives','lesquin','v2'],A25:['lomme','wazemmes','solf','chu'],A27:['vda','v2'],N41:['lomme','chu','wazemmes'],N227:['vda','v2','fives'],N356:['marcq','madeleine','v2','roubaix','euralille']};
 /* Données du robot : branche « data » du dépôt une fois en ligne, dossier data/ en local. */
 const DATA_BASE=(()=>{const h=location.hostname;if(h.endsWith('.github.io')){const owner=h.split('.')[0],repo=location.pathname.split('/')[1]||h;return 'https://raw.githubusercontent.com/'+owner+'/'+repo+'/data/';}return 'data/';})();
-let cells=[],SL=[],lastRefresh=0,busy=false,map=null,canvas=null,posMarker=null;
+let cells=[],SL=[],lastRefresh=0,busy=false,map=null,mapReady=false,posMarker=null;
 
 /* ---------- Sources ---------- */
 async function getJSON(url,opt){
@@ -501,7 +513,7 @@ function buildCells(){
   const ids=h3.polygonToCells([[50.55,2.92],[50.55,3.27],[50.76,3.27],[50.76,2.92]],8);
   cells=ids.map(id=>{const [lat,lng]=h3.cellToLatLng(id);
     const aw=[];ANCHORS.forEach((a,i)=>{const d=km(lat,lng,a.lat,a.lng),w=Math.exp(-(d/a.r)*(d/a.r));if(w>.02) aw.push({i,w});});
-    return {id,lat,lng,aw,sc:[0,0,0,0],dsm:[0,0,0,0]};
+    return {id,lat,lng,aw,sc:[0,0,0,0],dsm:[0,0,0,0],geom:{type:'Polygon',coordinates:[h3.cellToBoundary(id,true)]}};
   });
   const idx=new Map(cells.map((c,i)=>[c.id,i]));
   cells.forEach(c=>{const ring=h3.gridDisk(c.id,1);c.ring=new Set(ring);c.nbIdx=ring.filter(x=>x!==c.id&&idx.has(x)).map(x=>idx.get(x));});
@@ -630,9 +642,10 @@ function calc(c,s,detail){
   return {score,F,top,demand,mult,supply};
 }
 function level(s){if(s>=80) return ['hot','Majoration probable'];if(s>=65) return ['high','Forte demande'];if(s>=45) return ['mid','Correct'];if(s>=25) return ['low','Calme'];return ['low','Très calme'];}
-const RAMP=[[0,[78,159,161]],[55,[242,180,65]],[80,[232,85,58]],[100,[200,40,40]]];
-function color(s){for(let k=1;k<RAMP.length;k++){if(s<=RAMP[k][0]){const [a,ca]=RAMP[k-1],[b,cb]=RAMP[k],u=(s-a)/(b-a);return 'rgb('+ca.map((v,j)=>Math.round(v+(cb[j]-v)*u)).join(',')+')';}}return 'rgb(200,40,40)';}
-function opacity(s){return s<20?0:s<40?.16:s<65?.3:s<80?.45:.58;}
+/* Palette du score : bleu-vert (calme), vert pâle, ambre, orange, rouge (majoration probable). */
+const RAMP=[[0,[78,159,161]],[20,[78,159,161]],[45,[156,192,138]],[60,[242,180,65]],[75,[238,122,60]],[90,[215,38,61]],[100,[215,38,61]]];
+function color(s){for(let k=1;k<RAMP.length;k++){if(s<=RAMP[k][0]){const [a,ca]=RAMP[k-1],[b,cb]=RAMP[k],u=b>a?(s-a)/(b-a):0;return 'rgb('+ca.map((v,j)=>Math.round(v+(cb[j]-v)*u)).join(',')+')';}}return 'rgb(215,38,61)';}
+const GL_COLOR=['interpolate',['linear'],['get','score'],20,'#4E9FA1',45,'#9CC08A',60,'#F2B441',75,'#EE7A3C',90,'#D7263D'];
 
 /* ---------- Rendu ---------- */
 function recompute(){
@@ -654,11 +667,11 @@ function topCells(s,n){
   return out;
 }
 function styleMap(){
+  if(!mapReady) return;
   const s=state.slot;
-  cells.forEach(c=>{const sc=c.sc[s],op=opacity(sc),sel=c.id===state.sel,col=color(sc);
-    c.poly.setStyle({fillColor:col,fillOpacity:op,color:sel?getComputedStyle(document.documentElement).getPropertyValue('--fg').trim()||'#000':col,weight:sel?3:(sc>=80?1.5:.6),opacity:sel?1:(op?.75:0)});
-    if(sel) c.poly.bringToFront();
-  });
+  map.getSource('hex').setData({type:'FeatureCollection',features:cells.map(c=>({type:'Feature',properties:{id:c.id,score:c.sc[s]},geometry:c.geom}))});
+  map.setFilter('hex-sel',['==',['get','id'],state.sel||'']);
+  map.getSource('top').setData({type:'FeatureCollection',features:topCells(s,6).map((c,i)=>({type:'Feature',properties:{id:c.id,score:c.sc[s],rank:i+1},geometry:{type:'Point',coordinates:[c.lng,c.lat]}}))});
 }
 function renderSlots(){
   $('#slots').innerHTML=SL.map((S,s)=>'<button type="button" role="tab" data-s="'+s+'" aria-selected="'+(s===state.slot)+'">'+(s===0?'Maintenant':S.t.getHours()+'h')+'</button>').join('');
@@ -718,7 +731,9 @@ function renderLive(){
 }
 function renderSrc(){
   const order=['vlille','parking','pert','meteo','trains','roads','traffic','agenda','charge','hist','stops','cal'];
-  $('#srcs').innerHTML=order.filter(k=>SRC[k]).map(k=>{const x=SRC[k];return '<span class="src '+(x.ok?'ok':'err')+'" title="'+esc(x.info)+'"><i></i>'+esc(x.label)+' · '+esc(x.info)+'</span>';}).join('');
+  const all=order.filter(k=>SRC[k]),ok=all.filter(k=>SRC[k].ok).length,sum=$('#srcSum');
+  sum.className=ok<all.length?'warn':'';sum.innerHTML='<i></i>'+ok+' sources sur '+all.length+' à jour'+(ok<all.length?' : '+esc(all.filter(k=>!SRC[k].ok).map(k=>SRC[k].label).join(', '))+' en attente':'');
+  $('#srcs').innerHTML=all.map(k=>{const x=SRC[k];return '<span class="src '+(x.ok?'ok':'err')+'" title="'+esc(x.info)+'"><i></i>'+esc(x.label)+' · '+esc(x.info)+'</span>';}).join('');
 }
 function renderEvents(){
   const now=Date.now(),soon=D.autoEvents.filter(e=>{const d=parseLocal(e.end);return d&&d.getTime()>now-36e5&&d.getTime()<now+48*36e5;});
@@ -742,20 +757,56 @@ async function refresh(){
 
 function initMap(){
   const dark=matchMedia('(prefers-color-scheme: dark)').matches;
-  map=L.map('map',{zoomControl:true,preferCanvas:true,maxBounds:[[50.45,2.75],[50.85,3.45]],minZoom:10}).setView([50.6330,3.0700],13);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(map);
-  if(dark) document.documentElement.classList.add('dark-map');
-  canvas=L.canvas({padding:.4});
-  cells.forEach(c=>{c.poly=L.polygon(h3.cellToBoundary(c.id),{renderer:canvas,weight:.6,fillOpacity:0,opacity:0}).addTo(map);c.poly.on('click',()=>select(c.id,false));});
-  $('#ramp').style.background='linear-gradient(90deg,'+[20,45,65,80,95].map(color).join(',')+')';
+  map=new maplibregl.Map({container:'map',style:'https://tiles.openfreemap.org/styles/'+(dark?'dark':'positron'),
+    center:[3.07,50.633],zoom:12.2,minZoom:9.5,maxZoom:17,maxBounds:[[2.75,50.45],[3.45,50.85]],attributionControl:false});
+  map.addControl(new maplibregl.NavigationControl({visualizePitch:true}),'top-right');
+  map.addControl(new maplibregl.AttributionControl({compact:true,customAttribution:'Grille H3 (Uber, open source)'}),'bottom-right');
+  map.on('load',()=>{
+    /* Les hexagones passent sous les noms de rues et de quartiers du fond de carte. */
+    const firstLabel=(map.getStyle().layers.find(l=>l.type==='symbol')||{}).id;
+    map.addSource('hex',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    map.addSource('top',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+    map.addLayer({id:'hex-fill',type:'fill',source:'hex',paint:{'fill-color':GL_COLOR,'fill-opacity':['step',['get','score'],0,20,.14,40,.28,60,.42,75,.54,85,.62]}},firstLabel);
+    map.addLayer({id:'hex-3d',type:'fill-extrusion',source:'hex',filter:['>=',['get','score'],20],layout:{visibility:'none'},
+      paint:{'fill-extrusion-color':GL_COLOR,'fill-extrusion-height':['*',['^',['/',['get','score'],100],2],1300],'fill-extrusion-opacity':.85}});
+    map.addLayer({id:'hex-line',type:'line',source:'hex',filter:['>=',['get','score'],40],paint:{'line-color':GL_COLOR,'line-width':['step',['get','score'],.6,75,1.4],'line-opacity':.75}},firstLabel);
+    map.addLayer({id:'hex-hot',type:'line',source:'hex',filter:['>=',['get','score'],80],paint:{'line-color':'#D7263D','line-width':4,'line-blur':3,'line-opacity':.45}});
+    map.addLayer({id:'hex-sel',type:'line',source:'hex',filter:['==',['get','id'],''],paint:{'line-color':dark?'#FFFFFF':'#15181D','line-width':3}});
+    map.addLayer({id:'top-badge',type:'circle',source:'top',paint:{'circle-radius':14,'circle-color':GL_COLOR,'circle-stroke-width':2.5,'circle-stroke-color':dark?'#0E1116':'#FFFFFF'}});
+    map.addLayer({id:'top-label',type:'symbol',source:'top',layout:{'text-field':['to-string',['get','score']],'text-font':['Noto Sans Bold'],'text-size':12,'text-allow-overlap':true,'text-ignore-placement':true},
+      paint:{'text-color':['case',['>=',['get','score'],75],'#FFFFFF','#15181D']}});
+    ['hex-fill','hex-3d'].forEach(l=>{
+      map.on('click',l,e=>{if(e.features&&e.features[0]) select(e.features[0].properties.id,false);});
+      map.on('mouseenter',l,()=>{map.getCanvas().style.cursor='pointer';});
+      map.on('mouseleave',l,()=>{map.getCanvas().style.cursor='';});
+    });
+    map.on('click','top-badge',e=>{if(e.features&&e.features[0]) select(e.features[0].properties.id,true);});
+    /* Crédits repliés sur le bouton « i » pour ne pas couvrir la légende. */
+    document.querySelectorAll('.maplibregl-ctrl-attrib').forEach(e=>e.classList.remove('maplibregl-compact-show'));
+    mapReady=true;styleMap();pulse();
+  });
+  $('#ramp').style.background='linear-gradient(90deg,'+[20,45,60,75,90].map(color).join(',')+')';
+}
+/* Contour qui respire sur les secteurs en majoration probable (désactivé si l'appareil demande moins d'animations). */
+function pulse(){
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  let last=0;
+  const step=t=>{if(t-last>90){last=t;map.setPaintProperty('hex-hot','line-opacity',.2+.4*(.5+.5*Math.sin(t/520)));}requestAnimationFrame(step);};
+  requestAnimationFrame(step);
+}
+function setRelief(on){
+  $('#btn3d').setAttribute('aria-pressed',String(on));
+  map.setLayoutProperty('hex-3d','visibility',on?'visible':'none');
+  map.setPaintProperty('hex-fill','fill-opacity',on?['step',['get','score'],0,20,.08]:['step',['get','score'],0,20,.14,40,.28,60,.42,75,.54,85,.62]);
+  map.easeTo({pitch:on?55:0,bearing:on?-17:0,duration:900});
 }
 function select(id,fly){
   state.sel=id;styleMap();renderDetail();renderTop();
-  if(fly){const c=cells.find(x=>x.id===id);if(c) map.flyTo([c.lat,c.lng],Math.max(map.getZoom(),14),{duration:.6});}
+  if(fly&&map){const c=cells.find(x=>x.id===id);if(c) map.flyTo({center:[c.lng,c.lat],zoom:Math.max(map.getZoom(),13.6),duration:700});}
 }
 
 function init(){
-  if(!window.L||!window.h3){$('#detail').innerHTML='<p class="err">Les bibliothèques de carte n’ont pas pu se charger. Vérifiez la connexion puis rechargez la page.</p>';return;}
+  if(!window.maplibregl||!window.h3){$('#detail').innerHTML='<p class="err">Les bibliothèques de carte n’ont pas pu se charger. Vérifiez la connexion puis rechargez la page.</p>';return;}
   buildCells();initMap();
   $('#evPlace').innerHTML=PLACES.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('');
   $('#evSize').innerHTML=Object.keys(SIZES).map(k=>'<option value="'+k+'">'+esc(SIZES[k].label)+'</option>').join('');
@@ -764,6 +815,7 @@ function init(){
   renderEvents();
 
   $('#refreshBtn').addEventListener('click',refresh);
+  $('#btn3d').addEventListener('click',()=>{if(mapReady) setRelief($('#btn3d').getAttribute('aria-pressed')!=='true');});
   $('#slots').addEventListener('click',e=>{const b=e.target.closest('button[data-s]');if(!b) return;state.slot=+b.dataset.s;renderSlots();styleMap();renderDetail();renderTop();});
   $('#top').addEventListener('click',e=>{const b=e.target.closest('button[data-cell]');if(b) select(b.dataset.cell,true);});
   $('#detail').addEventListener('click',e=>{const b=e.target.closest('button[data-sig]');if(!b||!state.sel) return;
@@ -774,7 +826,9 @@ function init(){
     if(!navigator.geolocation){$('#locBtn').textContent='Position indisponible';return;}
     $('#locBtn').textContent='Localisation…';
     navigator.geolocation.getCurrentPosition(p=>{state.pos={lat:p.coords.latitude,lng:p.coords.longitude};$('#locBtn').textContent='Ma position';
-      if(posMarker) posMarker.setLatLng([state.pos.lat,state.pos.lng]);else posMarker=L.circleMarker([state.pos.lat,state.pos.lng],{radius:7,color:'#fff',weight:2,fillColor:'#2F62A8',fillOpacity:1}).addTo(map);
+      if(posMarker) posMarker.setLngLat([state.pos.lng,state.pos.lat]);
+      else{const el=document.createElement('div');el.className='me';el.setAttribute('aria-label','Ma position');posMarker=new maplibregl.Marker({element:el}).setLngLat([state.pos.lng,state.pos.lat]).addTo(map);}
+      map.flyTo({center:[state.pos.lng,state.pos.lat],zoom:Math.max(map.getZoom(),13),duration:700});
       renderDetail();renderTop();},()=>{$('#locBtn').textContent='Position refusée';},{enableHighAccuracy:true,timeout:10000,maximumAge:60000});
   });
   $('#evPlace').addEventListener('change',e=>{$('#evSize').value=PLACE_BY[e.target.value].cap;});
