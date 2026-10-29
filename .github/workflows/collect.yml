@@ -1,0 +1,45 @@
+name: Collecte des données
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: collecte
+  cancel-in-progress: false
+
+jobs:
+  collecte:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installer le décodeur temps réel SNCF
+        run: pip install --quiet gtfs-realtime-bindings==1.0.0
+
+      - name: Reprendre les données déjà publiées
+        run: |
+          mkdir -p out
+          if git fetch --quiet --depth=1 origin data; then git archive FETCH_HEAD | tar -x -C out; else echo "Première collecte"; fi
+
+      - name: Collecter
+        run: python scripts/collect.py --out out
+
+      - name: Publier sur la branche data
+        run: |
+          cd out
+          git init --quiet -b data
+          git config user.name "radar-mel-bot"
+          git config user.email "radar-mel-bot@users.noreply.github.com"
+          git add -A
+          git commit --quiet -m "Données du $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push --quiet --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data

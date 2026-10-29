@@ -1,0 +1,703 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Radar MEL">
+<title>Radar MEL</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout : carte H3 à gauche (en haut sur téléphone), panneau de lecture à droite ; mise à jour toutes les 5 min */
+:root{
+  --bg:#F5F4EF;--surface:#FFFFFF;--surface-2:#EDEBE4;--line:#D9D6CC;
+  --fg:#15181D;--muted:#5C636E;--accent:#8F5C00;--on-accent:#FFFFFF;--hot:#C23E1A;--ok:#2E7D4F;--bad:#B3261E;
+  --f-display:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Barlow",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-data:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0E1116;--surface:#161A21;--surface-2:#1F242D;--line:#2B313C;
+  --fg:#E7EAEF;--muted:#8D96A4;--accent:#F2B441;--on-accent:#17130A;--hot:#FF7D55;--ok:#5CC48A;--bad:#FF8A80;
+  color-scheme:dark}}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.45;-webkit-text-size-adjust:100%}
+body{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+button,input,select{font:inherit;color:inherit}
+input,select{font-size:16px}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.gut{padding-left:max(14px,env(safe-area-inset-left,0px));padding-right:max(14px,env(safe-area-inset-right,0px))}
+.eyebrow{font-family:var(--f-data);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0}
+h1{font-family:var(--f-display);font-weight:700;font-size:30px;line-height:1;margin:0}
+h2{font-family:var(--f-display);font-weight:600;font-size:21px;line-height:1.1;margin:0}
+.hint{margin:0;color:var(--muted);font-size:13px}
+.btn{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:7px 12px;min-height:40px;font-weight:600;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn[disabled]{opacity:.6;cursor:default}
+
+.bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;padding-block:10px;border-bottom:1px solid var(--line);background:var(--surface)}
+.bar .t{display:grid;gap:2px}
+.bar .r{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#upd{font-family:var(--f-data);font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.srcs{display:flex;flex-wrap:wrap;gap:6px;padding-block:8px;background:var(--surface);border-bottom:1px solid var(--line)}
+.src{font-size:12px;display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap}
+.src i{width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.src.ok i{background:var(--ok)}.src.err i{background:var(--bad)}
+
+.layout{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,1fr);align-items:start}
+@media (max-width:860px){.layout{grid-template-columns:minmax(0,1fr)}}
+.mapcol{position:sticky;top:0;height:calc(100vh - 110px);min-height:420px}
+@media (max-width:860px){.mapcol{position:relative;height:58vh;min-height:340px}}
+#map{position:absolute;inset:0;background:var(--surface-2)}
+.slots{position:absolute;z-index:500;top:10px;left:50%;transform:translateX(-50%);display:flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+.slots button{border:0;background:none;border-radius:999px;padding:6px 12px;font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap}
+.slots button[aria-selected="true"]{background:var(--accent);color:var(--on-accent)}
+.mapleg{position:absolute;z-index:500;left:10px;bottom:22px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font-size:11px;color:var(--muted);display:grid;gap:4px}
+.mapleg .ramp{height:8px;width:150px;border-radius:4px}
+.mapleg .lab{display:flex;justify-content:space-between}
+.locbtn{position:absolute;z-index:500;right:10px;bottom:22px}
+
+.side{display:grid;gap:14px;padding-block:14px 40px;min-width:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px;min-width:0}
+.card.sel{border-color:var(--accent)}
+.head{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+.head strong{font-family:var(--f-display);font-size:24px;font-weight:600;line-height:1.05}
+.score{font-family:var(--f-data);font-size:24px;font-variant-numeric:tabular-nums;line-height:1}
+.score small{font-size:12px;color:var(--muted)}
+.pill{font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid currentColor;white-space:nowrap}
+.pill.hot{color:var(--hot)}.pill.high{color:var(--accent)}.pill.mid{color:var(--fg)}.pill.low{color:var(--muted)}
+table.f{width:100%;border-collapse:collapse;font-size:14px}
+table.f td{padding:6px 0;border-top:1px solid var(--line);vertical-align:top}
+table.f td.v{text-align:right;font-family:var(--f-data);font-size:13px;white-space:nowrap;padding-left:10px;font-variant-numeric:tabular-nums}
+table.f tr.tot td{font-weight:600}
+table.f .sub{display:block;color:var(--muted);font-size:12px}
+.tip{margin:0;font-size:13px;color:var(--muted);border-left:2px solid var(--accent);padding-left:10px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+ol.top{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+ol.top button{width:100%;display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center;text-align:left;background:var(--surface-2);border:1px solid transparent;border-radius:10px;padding:8px 10px;cursor:pointer}
+ol.top button[aria-current="true"]{border-color:var(--accent)}
+ol.top .n{font-family:var(--f-data);font-size:18px;text-align:center;border-radius:8px;padding:6px 0;color:#15181D}
+ol.top .nm{font-weight:600;line-height:1.2}
+ol.top .why{display:block;font-weight:400;color:var(--muted);font-size:12px}
+ol.top .km{font-family:var(--f-data);font-size:12px;color:var(--muted)}
+.live{display:grid;gap:10px}
+.live h3{font-size:13px;margin:0;font-weight:600}
+.live ul{margin:0;padding-left:16px;display:grid;gap:3px;font-size:13px}
+.big{font-family:var(--f-data);font-variant-numeric:tabular-nums}
+.wx{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px}
+.wx div{background:var(--surface-2);border-radius:8px;padding:6px;text-align:center;font-size:12px;font-family:var(--f-data)}
+.wx b{display:block;font-family:var(--f-body);font-size:12px;color:var(--muted);font-weight:500}
+.tags{display:flex;flex-wrap:wrap;gap:6px}
+.tag{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--surface-2);border:1px solid var(--line)}
+.field{display:grid;gap:4px;min-width:0}
+.lbl{font-size:12px;color:var(--muted)}
+.field input,.field select{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:42px;width:100%}
+.evf{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px}
+.evf .full{grid-column:1/-1}
+@media (max-width:420px){.evf{grid-template-columns:minmax(0,1fr)}}
+.list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.list li{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-2);border-radius:8px;font-size:13px}
+.list li span{min-width:0}
+.list li.empty{background:none;padding:0;color:var(--muted)}
+.x{border:0;background:none;color:var(--muted);font-size:13px;text-decoration:underline;padding:4px;cursor:pointer;flex:none}
+.toggle{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.toggle input{width:20px;height:20px;accent-color:var(--accent);flex:none;margin:1px 0 0}
+.method ul{margin:0;padding-left:18px;display:grid;gap:5px;font-size:13px}
+.method a{color:var(--accent)}
+.err{color:var(--bad);font-size:13px;margin:0}
+.leaflet-container{font-family:var(--f-body)}
+.dark-map .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}
+</style>
+</head>
+<body>
+<header class="bar gut">
+  <div class="t">
+    <p class="eyebrow">Métropole européenne de Lille · grille H3</p>
+    <h1>Radar MEL</h1>
+  </div>
+  <div class="r">
+    <span id="upd">Chargement…</span>
+    <button type="button" class="btn" id="refreshBtn">Actualiser</button>
+  </div>
+</header>
+<div class="srcs gut" id="srcs" aria-label="Sources de données"></div>
+
+<div class="layout">
+  <div class="mapcol">
+    <div id="map" role="application" aria-label="Carte des secteurs H3"></div>
+    <div class="slots" role="tablist" id="slots"></div>
+    <div class="mapleg" aria-hidden="true"><div class="ramp" id="ramp"></div><div class="lab"><span>Calme</span><span>Forte</span><span>Majoration</span></div></div>
+    <button type="button" class="btn locbtn" id="locBtn">Ma position</button>
+  </div>
+
+  <main class="side gut">
+    <section class="card sel" id="detail" aria-live="polite"><p class="hint">Calcul en cours…</p></section>
+
+    <section class="card">
+      <h2>Meilleurs secteurs</h2>
+      <ol class="top" id="top"></ol>
+    </section>
+
+    <section class="card">
+      <h2>Données en direct</h2>
+      <div class="live" id="live"></div>
+    </section>
+
+    <section class="card">
+      <h2>Événements et soirées</h2>
+      <p class="hint">Repris automatiquement : concerts du Zénith, salons et congrès de Lille Grand Palais, matchs du LOSC à domicile.</p>
+      <ul class="list" id="autoList"></ul>
+      <p class="hint">Facultatif : ajoutez une soirée étudiante ou une réunion d'entreprise que vous connaissez.</p>
+      <form class="evf" id="evForm">
+        <div class="field full"><label class="lbl" for="evPlace">Lieu</label><select id="evPlace"></select></div>
+        <div class="field full"><label class="lbl" for="evName">Nom (facultatif)</label><input type="text" id="evName" maxlength="60" placeholder="Match du LOSC, concert, gala…"></div>
+        <div class="field"><label class="lbl" for="evEnd">Fin prévue</label><input type="datetime-local" id="evEnd" required></div>
+        <div class="field"><label class="lbl" for="evSize">Affluence</label><select id="evSize"></select></div>
+        <div class="full row"><button type="submit" class="btn primary">Ajouter</button><span class="hint" id="evStatus" role="status"></span></div>
+      </form>
+      <ul class="list" id="evList"></ul>
+    </section>
+
+    <section class="card method">
+      <h2>Ce que mesure le score</h2>
+      <ul>
+        <li><b>Toutes les 2 minutes, par votre téléphone</b> : vélos V'Lille par station, places libres des parkings MEL, perturbations ilévia (grèves comprises) ; météo au quart d'heure (Open-Meteo) toutes les 10 minutes.</li>
+        <li><b>Toutes les 5 à 10 minutes, par le robot de collecte</b> : retards et suppressions de trains à Lille Flandres et Lille Europe (temps réel SNCF), accidents, bouchons et fermetures de voies (Bison Futé).</li>
+        <li><b>Chaque jour</b> : horaires SNCF des 48 prochaines heures, agenda du Zénith et de Lille Grand Palais, matchs du LOSC, jours fériés, vacances scolaires de l'académie de Lille, stations de métro et de tram.</li>
+        <li><b>Grèves et circulation</b> : détectées sans intervention, à partir des messages ilévia (grève, bus déviés pour accident ou bouchon), des trains supprimés et des événements Bison Futé.</li>
+        <li><b>Demande habituelle</b> par quartier, heure et jour : jeudi soir étudiant, gares le vendredi et le dimanche soir, sorties de bureaux, fin du métro.</li>
+        <li><b>Sièges du groupe Mulliez</b> (Decathlon, Auchan, Leroy Merlin, Boulanger, Kiabi, Norauto, Saint Maclou, Oney, Jules, Nhood, Agapes, Electro Dépôt, Tape à l'œil) : arrivées le matin et départs vers les gares en fin de journée, en semaine. Leurs réunions ne sont pas publiques : si vous en connaissez une, ajoutez-la dans Événements (lieu « Réunion, séminaire »).</li>
+        <li><b>Score</b> = demande estimée × multiplicateurs (pluie, panne de métro, majoration signalée) ÷ chauffeurs disponibles estimés. Chaque terme est affiché avec sa valeur.</li>
+        <li><b>Limites</b> : Uber et Bolt ne publient ni leurs demandes ni le nombre de chauffeurs connectés, et la SNCF ne publie pas le remplissage des trains. Les voyageurs sont estimés à partir du type de train (places × 70 % en TGV, 35 % en TER, dont 40 % qui descendent quand Lille n'est pas le terminus). Le score reste une estimation, pas une mesure exacte.</li>
+      </ul>
+      <p class="hint">Données : <a href="https://data.lillemetropole.fr/" target="_blank" rel="noopener">MEL open data</a>, <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>, <a href="https://numerique.sncf.com/" target="_blank" rel="noopener">SNCF</a>, <a href="https://www.data.gouv.fr/" target="_blank" rel="noopener">data.gouv.fr</a>. Grille <a href="https://h3geo.org/" target="_blank" rel="noopener">H3</a> (Uber, open source). Fond de carte © OpenStreetMap.</p>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+<script>
+(function(){
+'use strict';
+const $=s=>document.querySelector(s);
+const pad=n=>String(n).padStart(2,'0');
+const DAYS=['dim.','lun.','mar.','mer.','jeu.','ven.','sam.'];
+const ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const fmtHM=d=>pad(d.getHours())+':'+pad(d.getMinutes());
+const toInput=d=>ymd(d)+'T'+fmtHM(d);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fr=(n,d)=>n.toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d});
+function parseLocal(v){const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(v||'');return m?new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5]):null;}
+function addHours(d,n){const x=new Date(d.getTime());x.setHours(x.getHours()+n);return x;}
+const newId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}};
+function km(lat1,lng1,lat2,lng2){const x=(lng2-lng1)*Math.cos((lat1+lat2)*Math.PI/360)*111.32,y=(lat2-lat1)*110.57;return Math.hypot(x,y);}
+const REFRESH_MS=2*60*1000,METEO_MS=10*60*1000;
+let lastMeteo=0;
+const GEO='https://data.lillemetropole.fr/geoserver/ogc/features/v1/collections/';
+
+/* ---------- Demande habituelle (0 à 10), de 6h à 5h le lendemain ; groupes de 6 : 6h–11h, 12h–17h, 18h–23h, 0h–5h ---------- */
+const P={
+  business:{sem:[4,7,8,5,3,3, 4,4,3,3,4,6, 8,7,5,3,2,2, 1,0,0,0,0,1],ven:[4,6,7,5,3,3, 4,4,3,4,5,7, 7,6,4,3,2,2, 1,0,0,0,0,0],sam:[1,1,1,2,2,2, 3,3,3,3,3,3, 2,2,2,1,1,1, 0,0,0,0,0,0],dim:[0,1,1,1,1,1, 2,2,2,2,2,2, 2,1,1,1,1,0, 0,0,0,0,0,1]},
+  station:{lun:[6,8,9,7,6,5, 5,5,5,5,6,7, 8,8,7,6,6,5, 3,1,0,0,0,2],sem:[5,7,8,6,5,5, 5,5,5,5,6,7, 8,7,6,5,5,4, 2,1,0,0,0,2],ven:[5,7,7,6,5,5, 6,6,7,8,8,9, 9,8,7,6,6,5, 3,1,0,0,0,1],sam:[3,4,5,6,6,6, 6,6,5,5,5,6, 6,6,5,5,4,4, 2,1,0,0,0,1],dim:[2,3,4,4,4,5, 5,5,6,6,7,8, 9,9,9,8,7,6, 3,1,0,0,0,3]},
+  airport:{sem:[4,5,6,6,4,3, 3,3,4,4,3,3, 4,5,5,5,4,2, 1,0,0,0,0,1],ven:[4,5,6,6,4,3, 3,3,4,5,4,4, 5,5,5,5,4,2, 1,0,0,0,0,1],sam:[3,4,5,5,4,3, 3,3,4,4,3,3, 4,4,4,4,3,2, 1,0,0,0,0,1],dim:[3,4,5,5,4,4, 4,4,4,4,4,5, 5,6,6,5,4,2, 1,0,0,0,0,1]},
+  nightlife:{lun:[0,1,1,1,1,2, 3,3,2,2,2,2, 2,3,3,3,3,3, 3,2,1,1,0,0],sem:[0,1,1,1,1,2, 3,3,2,2,2,2, 3,3,4,4,4,4, 4,4,3,2,1,0],jeu:[0,1,1,1,1,2, 3,3,2,2,2,3, 3,4,5,5,5,6, 6,7,6,4,2,1],ven:[1,1,1,1,1,2, 3,3,2,2,3,3, 4,5,6,6,6,7, 8,9,9,8,6,3],sam:[2,1,1,1,2,3, 4,4,4,4,4,4, 5,5,6,6,7,7, 8,9,10,9,8,5],dim:[3,2,1,1,2,3, 4,4,3,3,3,3, 3,3,3,3,2,2, 2,2,1,1,0,0]},
+  student:{lun:[0,0,0,0,0,1, 1,1,1,1,1,1, 2,2,2,2,2,2, 2,2,1,1,0,0],sem:[0,0,0,0,0,1, 1,1,1,1,1,2, 2,3,4,4,5,5, 5,6,5,3,1,0],jeu:[0,0,0,0,0,1, 1,1,1,1,2,2, 3,4,6,7,8,9, 9,10,10,8,5,2],ven:[1,1,0,0,0,1, 1,1,1,1,1,2, 2,3,3,4,4,5, 5,6,6,5,3,1],sam:[1,0,0,0,0,1, 1,1,1,1,1,2, 2,3,4,4,5,6, 6,7,7,6,4,2],dim:[1,0,0,0,0,0, 1,1,1,1,1,1, 1,1,1,1,1,1, 1,1,0,0,0,0]},
+  shopping:{sem:[1,2,3,3,4,5, 6,6,5,5,6,7, 7,6,4,2,1,1, 0,0,0,0,0,0],ven:[1,2,3,3,4,5, 6,6,6,6,7,7, 7,6,5,3,2,1, 0,0,0,0,0,0],sam:[1,1,2,3,5,6, 7,7,8,8,8,8, 7,6,4,3,2,1, 0,0,0,0,0,0],dim:[0,1,1,2,3,4, 5,5,5,5,5,4, 3,2,1,1,0,0, 0,0,0,0,0,0]},
+  corporate:{lun:[1,5,7,4,2,2, 2,3,2,2,3,5, 5,3,1,0,0,0, 0,0,0,0,0,0],sem:[1,4,6,4,2,2, 2,3,2,2,3,5, 5,3,1,0,0,0, 0,0,0,0,0,0],ven:[1,4,5,3,2,2, 2,3,3,4,4,3, 2,1,0,0,0,0, 0,0,0,0,0,0],sam:[0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0],dim:[0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0]},
+  hospital:{sem:[4,4,3,3,3,3, 4,4,4,4,4,4, 4,4,3,2,2,2, 1,1,1,1,1,2],sam:[3,3,3,3,3,3, 4,4,4,4,4,4, 4,3,3,2,2,1, 1,1,1,1,1,2],dim:[3,3,3,3,3,3, 4,4,4,4,4,4, 4,3,3,2,2,1, 1,1,1,1,1,2]}
+};
+const prof=(type,kind)=>P[type][kind]||P[type].sem;
+/* Chauffeurs en ligne (1 = moyenne). */
+const SUPPLY={
+  sem:[.75,1,1.1,1,.9,.85, .9,.9,.85,.85,.95,1.1, 1.2,1.2,1.1,1,.9,.8, .7,.6,.5,.45,.45,.55],
+  ven:[.75,1,1.05,1,.9,.85, .9,.9,.9,.95,1.05,1.2, 1.3,1.3,1.25,1.2,1.15,1.1, 1,.9,.8,.65,.5,.5],
+  sam:[.5,.6,.7,.8,.85,.9, .95,.95,.95,.95,1,1.1, 1.25,1.3,1.3,1.25,1.2,1.15, 1.05,.95,.85,.7,.55,.5],
+  dim:[.45,.5,.6,.7,.8,.85, .9,.9,.95,1,1.05,1.1, 1.1,1.05,1,.9,.8,.7, .55,.5,.45,.4,.4,.5]
+};
+const supplyAt=(kind,i)=>(SUPPLY[kind]||SUPPLY.sem)[i];
+
+/* Quartiers : centre, rayon d'influence (km), profil de demande. */
+const ANCHORS=[
+  {id:'gares',name:'Gares Lille Flandres / Europe',lat:50.6375,lng:3.0730,r:.55,mix:{station:1},supplyK:1.1,strike:1.35,xmas:true},
+  {id:'solf',name:'Solférino / Masséna',lat:50.6298,lng:3.0560,r:.45,mix:{student:1,nightlife:.2},strike:1.2},
+  {id:'vieux',name:'Vieux-Lille',lat:50.6412,lng:3.0632,r:.5,mix:{nightlife:.85,shopping:.3},strike:1.2},
+  {id:'wazemmes',name:'Wazemmes / Gambetta',lat:50.6262,lng:3.0485,r:.55,mix:{nightlife:.5,student:.35,shopping:.25},strike:1.2},
+  {id:'centre',name:'Grand Place / Rihour',lat:50.6367,lng:3.0632,r:.4,mix:{shopping:.8,nightlife:.35},strike:1.25,xmas:true},
+  {id:'euralille',name:'Euralille / Grand Palais',lat:50.6335,lng:3.0768,r:.55,mix:{business:.7,shopping:.35,nightlife:.2},strike:1.3},
+  {id:'fives',name:'Fives / Hellemmes',lat:50.6290,lng:3.0900,r:.6,mix:{nightlife:.3,shopping:.2,business:.2},strike:1.2},
+  {id:'lomme',name:'Lomme / Euratechnologies',lat:50.6330,lng:3.0200,r:.7,mix:{business:.55,nightlife:.15},strike:1.2},
+  {id:'vda',name:'Villeneuve-d’Ascq (campus, stade)',lat:50.6105,lng:3.1350,r:1.1,mix:{business:.35,shopping:.2,student:.35},strike:1.3},
+  {id:'v2',name:'Villeneuve-d’Ascq (V2, hôtel de ville)',lat:50.6430,lng:3.1430,r:.7,mix:{shopping:.7,business:.2},strike:1.25},
+  {id:'chu',name:'CHU / Lille Sud',lat:50.6108,lng:3.0335,r:.6,mix:{hospital:1},strike:1.25},
+  {id:'lesquin',name:'Aéroport de Lesquin',lat:50.5630,lng:3.0890,r:.6,mix:{airport:1},airport:true,supplyK:1.25,strike:1.3},
+  {id:'madeleine',name:'La Madeleine',lat:50.6555,lng:3.0715,r:.6,mix:{business:.3,nightlife:.25,shopping:.2},strike:1.2},
+  {id:'marcq',name:'Marcq-en-Barœul / Grand Boulevard',lat:50.6715,lng:3.0955,r:1,mix:{business:.45,nightlife:.25,shopping:.2},strike:1.2},
+  {id:'roubaix',name:'Roubaix centre',lat:50.6905,lng:3.1745,r:.9,mix:{business:.3,shopping:.3,nightlife:.25},strike:1.25},
+  {id:'tourcoing',name:'Tourcoing centre',lat:50.7232,lng:3.1610,r:.8,mix:{business:.3,shopping:.25,nightlife:.2},strike:1.25}
+];
+/* Sièges d'entreprises du groupe familial Mulliez (adresses officielles : annuaire des entreprises, api.gouv.fr).
+   Poids selon l'effectif de l'entreprise ; leurs réunions ne sont pas publiques, on modélise les arrivées et départs de semaine. */
+const HQS=[
+  ['Decathlon','Villeneuve-d’Ascq',50.6455,3.1418,.8],['Auchan','Villeneuve-d’Ascq',50.6500,3.1510,1],
+  ['Leroy Merlin','Lezennes',50.6122,3.1221,1],['Boulanger','Lesquin',50.5862,3.0961,.8],
+  ['Kiabi','Lezennes',50.6166,3.1229,.6],['Norauto / Mobivia','Villeneuve-d’Ascq',50.6201,3.1341,.8],
+  ['Saint Maclou','Lezennes',50.6014,3.1375,.45],['Oney','Croix',50.6678,3.1525,.45],
+  ['Jules','Roubaix',50.6733,3.1932,.6],['Nhood','Villeneuve-d’Ascq',50.6698,3.1428,.35],
+  ['Agapes (Flunch)','Lezennes',50.6180,3.1198,.3],['Electro Dépôt','Faches-Thumesnil',50.5815,3.0861,.6],
+  ['Tape à l’œil','Wasquehal',50.6832,3.1250,.35]
+];
+HQS.forEach(([n,city,lat,lng,w])=>ANCHORS.push({id:'hq-'+n.toLowerCase().replace(/[^a-z]+/g,''),name:'Siège '+n+' ('+city+')',lat,lng,r:.35,mix:{corporate:w},corp:true,strike:1.2}));
+const VENUES=[
+  {id:'pm',name:'Decathlon Arena – Stade Pierre-Mauroy',lat:50.6119,lng:3.1304,cap:'xl'},
+  {id:'zenith',name:'Zénith de Lille',lat:50.6318,lng:3.0763,cap:'m'},
+  {id:'lgp',name:'Lille Grand Palais',lat:50.6310,lng:3.0775,cap:'m'},
+  {id:'aero',name:'L’Aéronef',lat:50.6380,lng:3.0768,cap:'s'},
+  {id:'casino',name:'Casino Barrière',lat:50.6334,lng:3.0745,cap:'s'},
+  {id:'sebasto',name:'Théâtre Sébastopol',lat:50.6297,lng:3.0588,cap:'s'},
+  {id:'opera',name:'Opéra de Lille',lat:50.6377,lng:3.0662,cap:'s'},
+  {id:'splendid',name:'Le Splendid',lat:50.6262,lng:3.0872,cap:'s'},
+  {id:'stab',name:'Stab Vélodrome (Roubaix)',lat:50.6845,lng:3.2070,cap:'m'},
+  {id:'colisee',name:'Le Colisée (Roubaix)',lat:50.6915,lng:3.1755,cap:'s'}
+];
+const PLACES=VENUES.map(v=>({id:v.id,name:v.name,short:v.name,lat:v.lat,lng:v.lng,cap:v.cap})).concat(ANCHORS.map(a=>({id:'a:'+a.id,name:(a.corp?'Réunion, séminaire · ':'Quartier : ')+a.name,short:a.name,lat:a.lat,lng:a.lng,cap:a.corp?'s':'m'})));
+const PLACE_BY=Object.fromEntries(PLACES.map(p=>[p.id,p]));
+const SIZES={s:{label:'Petite (moins de 2 000)',boost:4},m:{label:'Moyenne (2 000 à 10 000)',boost:7},l:{label:'Grande (10 000 à 30 000)',boost:11},xl:{label:'Très grande (plus de 30 000)',boost:15}};
+const STATIONS={flandres:{name:'Lille Flandres',id:'87286005',lat:50.6365,lng:3.0705},europe:{name:'Lille Europe',id:'87223263',lat:50.6393,lng:3.0755}};
+
+/* ---------- Calendrier ---------- */
+let VAC=[['2026-10-17','2026-11-02'],['2026-12-19','2027-01-04'],['2027-02-20','2027-03-08'],['2027-04-17','2027-05-03'],['2027-07-03','2027-09-01']];
+const UNI_BREAK=[['2026-10-24','2026-11-02'],['2026-12-19','2027-01-04'],['2027-02-20','2027-03-01'],['2027-04-17','2027-05-03'],['2027-06-12','2027-09-06']];
+let FERIES=null;
+const inRanges=(rs,key)=>rs.some(([a,b])=>key>=a&&key<b);
+const monthDay=d=>pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const isXmas=d=>{const md=monthDay(d);return md>='11-21'&&md<='12-30';};
+const dayFeast=d=>{const md=monthDay(d);return md==='10-31'?'Halloween':md==='12-31'?'Nouvel An':md==='06-21'?'Fête de la musique':'';};
+function easter(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),n=h+l-7*m+114;return new Date(y,Math.floor(n/31)-1,n%31+1);}
+const holCache={};
+function holidaysComputed(y){
+  if(holCache[y]) return holCache[y];
+  const s=new Set(['01-01','05-01','05-08','07-14','08-15','11-01','11-11','12-25'].map(md=>y+'-'+md));
+  const e=easter(y);[1,39,50].forEach(n=>s.add(ymd(new Date(e.getFullYear(),e.getMonth(),e.getDate()+n))));
+  return holCache[y]=s;
+}
+const isHoliday=d=>FERIES?FERIES.has(ymd(d)):holidaysComputed(d.getFullYear()).has(ymd(d));
+function serviceInfo(t){
+  const idx=(t.getHours()+18)%24;
+  const sd=new Date(t.getFullYear(),t.getMonth(),t.getDate()-(t.getHours()<6?1:0));
+  let kind=['dim','lun','sem','sem','jeu','ven','sam'][sd.getDay()],note='';
+  if(isHoliday(sd)&&kind!=='sam'&&kind!=='dim'){kind='dim';note='Jour férié';}
+  if(isHoliday(new Date(sd.getFullYear(),sd.getMonth(),sd.getDate()+1))){kind=(kind==='dim'||kind==='sam')?'sam':'ven';note=note||'Veille de jour férié';}
+  return {idx,kind,note,sd};
+}
+let ctxCache={};
+function dayCtx(sd){
+  const key=ymd(sd);
+  if(ctxCache[key]) return ctxCache[key];
+  const next=ymd(new Date(sd.getFullYear(),sd.getMonth(),sd.getDate()+1)),uni=inRanges(UNI_BREAK,key);
+  return ctxCache[key]={vacS:inRanges(VAC,key),vacStart:VAC.some(([a])=>a===key||a===next),vacEnd:VAC.some(([,b])=>b===next),uniBreak:uni,stud:uni?.35:1,feast:dayFeast(sd)};
+}
+function traffic(si,ctx){
+  const k=si.kind,i=si.idx;if(k==='sam'||k==='dim') return 1;
+  let f=1;if(i>=1&&i<=3) f=.85;else if(i>=10&&i<=13) f=k==='ven'?.78:.82;
+  return ctx.vacS?1-(1-f)*.5:f;
+}
+function baseReasons(m,si,ctx,R){
+  const k=si.kind,i=si.idx,sat=k==='sam',weekday=(k!=='sam'&&k!=='dim');
+  if(m.airport){if(i>=2&&i<=4) R.push({w:5,t:'arrivées du matin'});else if(i>=12&&i<=15) R.push({w:5,t:'arrivées du soir'});}
+  if(m.station){
+    if(ctx.vacEnd&&i>=8) R.push({w:9,t:'retours de vacances'});else if(ctx.vacStart&&i>=8) R.push({w:8,t:'départs en vacances'});
+    if(k==='dim'&&i>=10&&i<=16) R.push({w:8,t:'retours du dimanche soir'});
+    else if(k==='ven'&&i>=8&&i<=13) R.push({w:8,t:'départs du vendredi'});
+    else if(k==='lun'&&i<=3) R.push({w:7,t:'arrivées du lundi matin'});
+    else if(weekday&&i>=1&&i<=3) R.push({w:5,t:'pointe du matin'});
+  }
+  if(m.business&&weekday){if(i>=1&&i<=3) R.push({w:6*m.business,t:'arrivée dans les bureaux'});else if(i>=11&&i<=13) R.push({w:6*m.business,t:'sortie des bureaux'});}
+  if(m.corporate&&weekday){
+    if(i>=1&&i<=3) R.push({w:7,t:'arrivées au siège (salariés, visiteurs venus en TGV)'});
+    else if(i>=10&&i<=12) R.push({w:7,t:k==='ven'?'départs du vendredi vers les gares':'départs du siège vers les gares'});
+    if(ctx.vacS) R.push({w:3,t:'vacances scolaires : moins de rendez-vous'});
+  }
+  if(m.nightlife||m.student){
+    const night=(m.nightlife||0)+(m.student||0)*ctx.stud,a=sat?20:19,b=sat?23:22;
+    if(i>=a&&i<=b&&ctx.feast!=='Nouvel An') R.push({w:9*night,t:sat?'plus de métro après 1h30':'plus de métro après 0h30'});
+    if(i>=16){
+      if(k==='jeu'&&m.student) R.push({w:9*m.student*ctx.stud+1,t:'jeudi soir étudiant'});
+      else if(i<a&&(k==='ven'||sat)) R.push({w:6*night,t:k==='ven'?'vendredi soir':'samedi soir'});
+      else if(i<a&&k==='sem'&&m.student) R.push({w:5*m.student*ctx.stud,t:'soirées étudiantes'});
+    }
+  }
+  if(m.student&&ctx.uniBreak&&i>=12) R.push({w:6,t:'vacances universitaires (moins d’étudiants)'});
+  if(m.shopping&&k==='sam'&&i>=6&&i<=12) R.push({w:4*m.shopping,t:'shopping du samedi'});
+  if(m.hospital) R.push({w:2,t:'hôpitaux, demande régulière'});
+  if(si.note) R.push({w:4,t:si.note.toLowerCase()});
+}
+function specials(a,si,ctx){
+  const out=[],i=si.idx,m=a.mix,party=(m.nightlife||0)+(m.student||0)>=.5;
+  if(ctx.feast==='Halloween'&&i>=14&&party) out.push({m:1.3,w:7,t:'Halloween'});
+  if(ctx.feast==='Nouvel An'&&i>=16) out.push({m:1.5,w:10,t:'nuit du Nouvel An'});
+  if(ctx.feast==='Fête de la musique'&&i>=12&&(party||a.id==='centre')) out.push({m:1.4,w:8,t:'Fête de la musique'});
+  if(a.xmas&&isXmas(si.sd)&&i>=8&&i<=17) out.push({m:(si.kind==='sam'||si.kind==='dim')?1.25:1.15,w:5,t:'marché de Noël'});
+  return out;
+}
+function anchorDemand(a,si,ctx){
+  let d=0;
+  for(const type in a.mix){let w=a.mix[type];if(type==='student') w*=ctx.stud;if(type==='business'&&ctx.vacS) w*=.85;if(type==='corporate'&&ctx.vacS) w*=.75;d+=w*(prof(type,si.kind)[si.idx]||0);}
+  if(a.mix.station&&(ctx.vacEnd||ctx.vacStart)&&si.idx>=8) d*=1.3;
+  return d;
+}
+
+/* ---------- État ---------- */
+const D={vl:[],vlHist:store.get('rm-vlhist',[]),park:[],pert:[],metro:[],tram:[],trains:[],traffic:[],autoEvents:[],W:null};
+const SRC={};
+const state={events:store.get('rm-events',[]),signals:store.get('rm-signals',[]),slot:0,sel:null,pos:null};
+/* Conditions détectées automatiquement (grève, trains supprimés, circulation). */
+const AUTO={ilevia:'',cancel:{},jam:1,jamTxt:''};
+/* Données du robot : branche « data » du dépôt une fois en ligne, dossier data/ en local. */
+const DATA_BASE=(()=>{const h=location.hostname;if(h.endsWith('.github.io')){const owner=h.split('.')[0],repo=location.pathname.split('/')[1]||h;return 'https://raw.githubusercontent.com/'+owner+'/'+repo+'/data/';}return 'data/';})();
+let cells=[],SL=[],lastRefresh=0,busy=false,map=null,canvas=null,posMarker=null;
+
+/* ---------- Sources ---------- */
+async function getJSON(url,opt){
+  const ctl=new AbortController(),tm=setTimeout(()=>ctl.abort(),20000);
+  try{const r=await fetch(url,Object.assign({cache:'no-store',signal:ctl.signal},opt||{}));if(!r.ok) throw new Error('HTTP '+r.status);return await r.json();}
+  finally{clearTimeout(tm);}
+}
+async function run(name,label,fn){
+  try{const info=await fn();SRC[name]={ok:true,label,info,at:new Date()};}
+  catch(e){SRC[name]={ok:false,label,info:e&&e.name==='AbortError'?'délai dépassé':(e&&e.message)||'erreur',at:new Date()};}
+}
+async function cached(key,maxAgeH,url){
+  const c=store.get(key,null);
+  if(c&&c.at&&Date.now()-c.at<maxAgeH*36e5) return c.data;
+  const data=await getJSON(url);store.set(key,{at:Date.now(),data});return data;
+}
+function loadVlille(){return getJSON(GEO+'dsp_ilevia:vlille_temps_reel/items?f=json&limit=1000').then(j=>{
+  D.vl=(j.features||[]).filter(f=>f.geometry).map(f=>{const p=f.properties;return {id:p.identifiant_station,name:p.nom||'',lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0],bikes:+p.nb_velos_dispo||0,docks:+p.nb_places_dispo||0,ok:p.etat==='EN SERVICE'&&p.etat_connexion==='CONNECTÉ'};});
+  const now=Date.now(),snap={at:now,m:{}};D.vl.forEach(s=>{if(s.ok) snap.m[s.id]=s.bikes;});
+  D.vlHist=D.vlHist.filter(h=>h.at>now-75*6e4&&h.at<now-60e3).concat([snap]);store.set('rm-vlhist',D.vlHist);
+  const ok=D.vl.filter(s=>s.ok);return ok.length+' stations';
+});}
+function loadParking(){return getJSON(GEO+'mel_mobilite_et_transport:parking/items?f=json&limit=200').then(j=>{
+  D.park=(j.features||[]).map(f=>{const p=f.properties,lat=+p.latitude||(f.geometry&&f.geometry.coordinates[1]),lng=+p.longitude||(f.geometry&&f.geometry.coordinates[0]);const tot=+p.nbr_total||0,free=Math.max(0,+p.nbr_libre||0);return {name:(p.nom||'').trim(),lat,lng,total:tot,free,occ:tot?1-free/tot:0,open:(p.etat||'').toUpperCase()==='OUVERT'};}).filter(p=>p.lat&&p.total>0);
+  return D.park.filter(p=>p.open).length+' parkings';
+});}
+function loadPert(){return getJSON(GEO+'dsp_ilevia:perturbations/items?f=json&limit=300').then(j=>{
+  const now=Date.now();
+  D.pert=(j.features||[]).map(f=>{const p=f.properties||{},m=/LineRef::([^:]+):/.exec(p.cible||''),line=m?m[1]:'';
+    const msg=(p.message||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim(),low=msg.toLowerCase();
+    const fin=p.heure_fin_prevue?new Date(p.heure_fin_prevue):null;
+    const mode=line==='ME1'?'m1':line==='ME2'?'m2':/\btram/.test(low)?'tram':'bus';
+    const sev=/interromp|pas de service|aucun métro|suspendu|fermée|fermee/.test(low)?'stop':/ralenti|allong|retard|perturb|réduit|reduit/.test(low)?'slow':'info';
+    return {line,mode,sev,fin,msg};
+  }).filter(p=>!p.fin||p.fin.getTime()>now);
+  const heavy=D.pert.filter(p=>p.mode!=='bus'&&p.sev!=='info').length;
+  return heavy?heavy+' sur métro/tram':'métro et tram normaux';
+});}
+function loadMeteo(){return getJSON('https://api.open-meteo.com/v1/forecast?latitude=50.633&longitude=3.06&minutely_15=precipitation&hourly=precipitation,precipitation_probability,snowfall,temperature_2m&timezone=Europe%2FParis&forecast_days=2').then(j=>{
+  const h=j.hourly||{},W={hIdx:{},time:h.time||[],precip:h.precipitation||[],prob:h.precipitation_probability||[],snow:h.snowfall||[],temp:h.temperature_2m||[],q:{time:(j.minutely_15||{}).time||[],p:(j.minutely_15||{}).precipitation||[]}};
+  W.time.forEach((t,i)=>{W.hIdx[t]=i;});D.W=W;
+  const i=W.hIdx[ymd(new Date())+'T'+pad(new Date().getHours())+':00'];
+  return i!=null?fr(W.temp[i],0)+' °C, '+fr(W.precip[i],1)+' mm':'prévisions reçues';
+});}
+function age(u){const d=parseLocal(u);if(!d) return '';const m=Math.round((Date.now()-d)/6e4);return m<=1?'':m<90?', il y a '+m+' min':', '+DAYS[d.getDay()]+' '+fmtHM(d);}
+function loadBot(){
+  const g=n=>getJSON(DATA_BASE+n+'?t='+Math.floor(Date.now()/6e4)).catch(()=>null);
+  return Promise.all([g('schedule.json'),g('rt.json'),g('traffic.json'),g('events.json')]).then(([sc,rt,tf,ev])=>{
+    SRC.traffic={ok:!!tf,label:'Trafic Bison Futé',info:tf?(tf.events||[]).length+' signalement'+((tf.events||[]).length>1?'s':'')+age(tf.updated):'pas encore collecté'};
+    SRC.agenda={ok:!!ev,label:'Agenda',info:ev?(ev.events||[]).length+' événements'+age(ev.updated):'pas encore collecté'};
+    D.traffic=(tf&&tf.events)||[];
+    D.autoEvents=((ev&&ev.events)||[]).map((e,i)=>Object.assign({id:'auto'+i,auto:true},e));
+    if(!sc&&!rt) throw new Error('robot pas encore lancé');
+    const rtBy={},used=new Set(),list=[];
+    ((rt&&rt.trains)||[]).forEach(x=>{rtBy[x.trip+'|'+x.st]=x;});
+    ((sc&&sc.trains)||[]).forEach(x=>{const k=x.trip+'|'+x.st,r=rtBy[k],base=parseLocal(x.t);if(!base) return;if(r) used.add(k);
+      const delay=r?r.delay||0:0,at=r&&r.t?parseLocal(r.t):new Date(base.getTime()+delay*6e4);
+      list.push({st:x.st,at,delay,canceled:!!(r&&r.canceled),seats:x.seats,mode:x.mode,term:x.term});});
+    ((rt&&rt.trains)||[]).forEach(r=>{const k=r.trip+'|'+r.st;if(used.has(k)||!r.t) return;list.push({st:r.st,at:parseLocal(r.t),delay:r.delay||0,canceled:!!r.canceled,seats:seatsFor((r.mode||'').toLowerCase()),mode:r.mode,term:true});});
+    D.trains=list.filter(x=>x.at);
+    return D.trains.length+' arrivées sur 48 h'+age(rt&&rt.updated);
+  });
+}
+/* Voyageurs qui descendent : places × remplissage (70 % TGV, 35 % TER) × 40 % si Lille n'est pas le terminus. */
+const paxOf=a=>a.canceled?0:a.seats*(/ter/i.test(a.mode)?.35:.7)*(a.term?1:.4);
+function computeAuto(){
+  const g=D.pert.filter(p=>/grève|greve|mouvement social/i.test(p.msg));
+  AUTO.ilevia=g.length?'Grève ilévia ('+g.length+' message'+(g.length>1?'s':'')+')':'';
+  const now=Date.now(),soon=D.trains.filter(a=>a.at.getTime()>=now-15*6e4&&a.at.getTime()<now+3*36e5);
+  AUTO.cancel={};Object.keys(STATIONS).forEach(k=>{const l=soon.filter(a=>a.st===k);AUTO.cancel[k]={n:l.length,c:l.filter(a=>a.canceled).length};});
+  const acc=D.traffic.filter(e=>/Accident|VehicleObstruction|AbnormalTraffic|GeneralObstruction/.test(e.kind));
+  const closed=D.traffic.filter(e=>/RoadOrCarriagewayOrLaneManagement|Rerouting/.test(e.kind));
+  const bus=D.pert.filter(p=>p.mode==='bus'&&/accident|difficult[ée]s de circulation|bouchon|embouteillage|manifestation/i.test(p.msg));
+  let f=1;const parts=[];
+  if(acc.length){f*=Math.max(.8,1-.07*acc.length);parts.push(acc.length+' accident'+(acc.length>1?'s':'')+' ou bouchon'+(acc.length>1?'s':'')+' sur les grands axes');}
+  if(closed.length){f*=Math.max(.9,1-.02*closed.length);parts.push(closed.length+' voie'+(closed.length>1?'s':'')+' fermée'+(closed.length>1?'s':''));}
+  if(bus.length){f*=Math.max(.85,1-.03*bus.length);parts.push(bus.length+' ligne'+(bus.length>1?'s':'')+' de bus déviée'+(bus.length>1?'s':'')+' (accident, circulation)');}
+  AUTO.jam=f;AUTO.jamTxt=parts.join(', ');
+}
+function seatsFor(m){return /ouigo/.test(m)?1000:/eurostar/.test(m)?750:/tgv|inoui|grande vitesse/.test(m)?550:/intercit/.test(m)?400:/ter|express r/.test(m)?250:300;}
+function loadStops(){return Promise.all([
+  cached('rm-metro',24*7,GEO+'mel_mobilite_et_transport:stations_metro/items?f=json&limit=500'),
+  cached('rm-tram',24*7,GEO+'mel_mobilite_et_transport:tramway_arrets/items?f=json&limit=500')
+]).then(([m,t])=>{
+  D.metro=(m.features||[]).filter(f=>f.geometry).map(f=>({name:f.properties.nom_statio,line:String(f.properties.ligne),lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]}));
+  D.tram=(t.features||[]).filter(f=>f.geometry).map(f=>({name:f.properties.libelle||f.properties.nom_statio,lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]}));
+  return D.metro.length+' métro, '+D.tram.length+' tram';
+});}
+function loadCalendar(){
+  const today=ymd(new Date());
+  return Promise.all([
+    cached('rm-feries',24,'https://calendrier.api.gouv.fr/jours-feries/metropole.json').then(o=>{FERIES=new Set(Object.keys(o||{}));}),
+    cached('rm-vac',24,'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records?limit=100&where='+encodeURIComponent('location="Lille" and end_date>"'+today+'"')+'&order_by=start_date').then(j=>{
+      const seen=new Set(),r=[];
+      (j.results||[]).forEach(x=>{if(x.population&&!/^-$|élèves/i.test(x.population)) return;const a=ymd(new Date(x.start_date)),b=ymd(new Date(x.end_date)),k=a+b;if(!seen.has(k)){seen.add(k);r.push([a,b]);}});
+      if(r.length) VAC=r;
+    })
+  ]).then(()=>{ctxCache={};return 'fériés et vacances zone B';});
+}
+
+/* ---------- Grille H3 ---------- */
+function buildCells(){
+  const ids=h3.polygonToCells([[50.55,2.92],[50.55,3.27],[50.76,3.27],[50.76,2.92]],8);
+  cells=ids.map(id=>{const [lat,lng]=h3.cellToLatLng(id);
+    const aw=[];ANCHORS.forEach((a,i)=>{const d=km(lat,lng,a.lat,a.lng),w=Math.exp(-(d/a.r)*(d/a.r));if(w>.02) aw.push({i,w});});
+    return {id,lat,lng,aw,sc:[0,0,0,0]};
+  });
+}
+function cellLive(){
+  const now=Date.now(),old=D.vlHist.filter(h=>h.at<=now-10*6e4).pop(),dmin=old?Math.round((now-old.at)/6e4):0;
+  const okSt=D.vl.filter(s=>s.ok),lines={m1:'1',m2:'2'};
+  const hit=D.pert.filter(p=>p.mode!=='bus'&&p.sev!=='info');
+  cells.forEach(c=>{
+    let n=0,emptyN=0,empty=0,bikes=0,delta=0,hasOld=false,best=null,bestD=9;
+    for(const s of D.vl){const d=km(c.lat,c.lng,s.lat,s.lng);if(d<bestD){bestD=d;best=s;}}
+    for(const s of okSt){const d=km(c.lat,c.lng,s.lat,s.lng);if(d>.8) continue;const w=d<=.5?1:.5;
+      if(d<=.5){n++;bikes+=s.bikes;if(s.bikes<=1) emptyN++;}
+      if(s.bikes<=1) empty+=w;
+      if(old&&d<=.5&&old.m[s.id]!=null){delta+=s.bikes-old.m[s.id];hasOld=true;}
+    }
+    c.vl=n||empty?{n,emptyN,empty,bikes,delta:hasOld&&dmin<=40?delta:null,dmin}:null;
+    c.name=best&&bestD<.7?titleCase(best.name):nearestAnchor(c).name;
+    c.pk=D.park.filter(p=>p.open&&km(c.lat,c.lng,p.lat,p.lng)<.6);
+    c.dis=[];
+    hit.forEach(p=>{const pts=p.mode==='tram'?D.tram:D.metro.filter(s=>s.line===lines[p.mode]);if(pts.some(s=>km(c.lat,c.lng,s.lat,s.lng)<.6)) c.dis.push(p);});
+    c.tr=[];Object.entries(STATIONS).forEach(([sid,st])=>{const d=km(c.lat,c.lng,st.lat,st.lng);if(d<.8) c.tr.push({sid,w:d<.4?1:.5});});
+  });
+}
+function nearestAnchor(c){let b=ANCHORS[0],bd=99;ANCHORS.forEach(a=>{const d=km(c.lat,c.lng,a.lat,a.lng);if(d<bd){bd=d;b=a;}});return b;}
+function titleCase(s){return s.toLowerCase().replace(/(^|[\s'’-])(\p{L})/gu,(m,a,b)=>a+b.toUpperCase());}
+
+/* ---------- Calcul ---------- */
+function slotTime(s){if(s===0) return new Date();const t=new Date();t.setMinutes(0,0,0);return addHours(t,s);}
+function weatherFor(t,isNow,idx){
+  const W=D.W,out={m:1,txt:'',snow:false};if(!W) return out;
+  const key=ymd(t)+'T'+pad(t.getHours())+':00',i=W.hIdx[key];if(i==null) return out;
+  let p=W.precip[i]||0,p0=i>0?(W.precip[i-1]||0):0;
+  if(isNow&&W.q.time.length){const q=new Date(t);q.setMinutes(Math.floor(q.getMinutes()/15)*15,0,0);const qk=ymd(q)+'T'+fmtHM(q),qi=W.q.time.indexOf(qk);if(qi>=0){let s=0;for(let k=0;k<4;k++) s+=W.q.p[qi+k]||0;p=s;}}
+  const sn=W.snow[i]||0,temp=W.temp[i],parts=[];
+  if(sn>.05){out.m*=1.5;out.snow=true;parts.push('Neige '+fr(sn,1)+' cm/h');}
+  else if(p>=.2){const onset=p0<.2;out.m*=(p>=2?1.45:p>=.5?1.3:1.15)*(onset?1.15:1);parts.push('Pluie '+fr(p,1)+' mm/h'+(onset?' (début d’averse)':''));}
+  if(temp!=null&&temp<3&&idx>=13){out.m*=1.1;parts.push('Froid '+fr(temp,0)+' °C');}
+  out.txt=parts.join(', ');out.p=p;out.temp=temp;return out;
+}
+function buildSlots(){
+  SL=[0,1,2,3].map(s=>{const t=slotTime(s),si=serviceInfo(t),ctx=dayCtx(si.sd);
+    const sp=ANCHORS.map(a=>specials(a,si,ctx));
+    return {t,si,ctx,ad:ANCHORS.map(a=>anchorDemand(a,si,ctx)),sp,spm:sp.map(l=>l.reduce((m,x)=>m*x.m,1)),w:weatherFor(t,s===0,si.idx),sup:supplyAt(si.kind,si.idx),tf:traffic(si,ctx),win:s===0?[t.getTime()-10*6e4,t.getTime()+50*6e4]:[t.getTime(),t.getTime()+36e5]};
+  });
+}
+function evWeight(ev,a,b){const e=parseLocal(ev.end);if(!e) return 0;const x=Math.max(a,e.getTime()-20*6e4),y=Math.min(b,e.getTime()+70*6e4);return y>x?(y-x)/36e5:0;}
+function signalK(sg,t){const h0=new Date(sg.at);h0.setMinutes(0,0,0);const d=Math.floor((t.getTime()-h0.getTime())/36e5);return d===0?1:d===1?.5:d===2?.2:0;}
+function calc(c,s,detail){
+  const S=SL[s],F=detail?[]:null;
+  let base=0,ws=0,supK=0,strK=0,top=-1,topV=0;
+  /* Avec les horaires SNCF réels, la part « gares » de la demande habituelle est divisée par deux : les trains apportent le reste. */
+  for(const x of c.aw){const v=S.ad[x.i]*x.w*S.spm[x.i]*(ANCHORS[x.i].id==='gares'&&D.trains.length?.5:1);base+=v;ws+=x.w;supK+=x.w*(ANCHORS[x.i].supplyK||1);strK+=x.w*(ANCHORS[x.i].strike||1.2);if(v>topV){topV=v;top=x.i;}}
+  supK=ws?supK/ws:1;strK=ws?strK/ws:1.2;
+  if(F){const R=[];if(top>=0){baseReasons(ANCHORS[top].mix,S.si,S.ctx,R);S.sp[top].forEach(x=>R.push(x));}R.sort((a,b)=>b.w-a.w);
+    F.push({t:'Demande habituelle'+(top>=0?' · '+ANCHORS[top].name:''),sub:DAYS[S.t.getDay()]+' '+S.t.getHours()+'h'+(R.length?' : '+R.slice(0,2).map(r=>r.t).join(', '):''),v:fr(base,1)});}
+  let add=0;const kv=[1,.5,.2,0][s];
+  if(c.vl&&kv){
+    if(c.vl.emptyN>=1){const v=Math.min(4,c.vl.emptyN*.7+c.vl.emptyN/c.vl.n*1.5)*kv;add+=v;F&&F.push({t:'V’Lille : '+c.vl.emptyN+' station'+(c.vl.emptyN>1?'s':'')+' vide'+(c.vl.emptyN>1?'s':'')+' sur '+c.vl.n,sub:c.vl.bikes+' vélo'+(c.vl.bikes>1?'s':'')+' disponible'+(c.vl.bikes>1?'s':'')+' à moins de 500 m',v:'+'+fr(v,1)});}
+    if(c.vl.delta!=null&&c.vl.delta<=-4){const v=Math.min(3,-c.vl.delta*.15)*kv;add+=v;F&&F.push({t:'V’Lille : '+c.vl.delta+' vélos en '+c.vl.dmin+' min',sub:'les gens quittent le secteur',v:'+'+fr(v,1)});}
+  }
+  if(c.pk.length){const pkk=[.5,.9,.6,.3][s];let v=0,bestP=null;c.pk.forEach(p=>{if(p.occ>=.8){const x=(p.occ-.7)/.3*1.5;if(x>v){v=x;bestP=p;}}});
+    if(bestP){v*=pkk;add+=v;F&&F.push({t:'Parking '+bestP.name+' : '+Math.round(bestP.occ*100)+' % plein',sub:bestP.free+' places libres sur '+bestP.total+(s===0?' ; les gens repartiront plus tard':''),v:'+'+fr(v,1)});}}
+  if(c.tr.length&&D.trains.length){c.tr.forEach(x=>{const arr=D.trains.filter(a=>a.st===x.sid&&a.at.getTime()>=S.win[0]&&a.at.getTime()<S.win[1]);if(!arr.length) return;
+    /* Poids des voyageurs dans la demande VTC : 1 point pour 800 en TGV, OUIGO ou Eurostar, pour 2 500 en TER. */
+    const pax=arr.reduce((m,a)=>m+paxOf(a),0),late=arr.filter(a=>a.delay>=10).length,can=arr.filter(a=>a.canceled).length;
+    const v=arr.reduce((m,a)=>m+paxOf(a)/(/ter/i.test(a.mode)?2500:800),0)*x.w;add+=v;
+    F&&F.push({t:STATIONS[x.sid].name+' : ≈ '+fr(Math.round(pax/50)*50,0)+' voyageurs',sub:(arr.length-can)+' train'+(arr.length-can>1?'s':'')+(late?', dont '+late+' en retard':'')+(can?', '+can+' supprimé'+(can>1?'s':''):'')+' (horaires SNCF)',v:'+'+fr(v,1)});});}
+  state.events.concat(D.autoEvents).forEach(ev=>{const pl=PLACE_BY[ev.place];if(!pl) return;const d=km(c.lat,c.lng,pl.lat,pl.lng);if(d>=.8) return;const w=evWeight(ev,S.win[0],S.win[0]+36e5);if(!w) return;
+    const v=SIZES[ev.size].boost*w*(d<.4?1:.5);add+=v;F&&F.push({t:'Fin d’événement · '+(ev.label||pl.short),sub:'vers '+fmtHM(parseLocal(ev.end))+', affluence '+SIZES[ev.size].label.split(' (')[0].toLowerCase()+(ev.src?' · '+ev.src:''),v:'+'+fr(v,1)});});
+  let mult=1;
+  if(S.w.m!==1){mult*=S.w.m;F&&F.push({t:S.w.txt,sub:'Open-Meteo',v:'× '+fr(S.w.m,2)});}
+  if(c.dis.length){const stop=c.dis.find(p=>p.sev==='stop'),p=stop||c.dis[0];if(!p.fin||S.t<p.fin){const m=stop?1.35:1.12;mult*=m;
+    F&&F.push({t:(p.mode==='m1'?'Métro 1':p.mode==='m2'?'Métro 2':'Tram')+(stop?' interrompu':' perturbé'),sub:'ilévia'+(p.fin?', fin prévue '+fmtHM(p.fin):''),v:'× '+fr(m,2)});}}
+  state.signals.forEach(sg=>{const k=signalK(sg,S.t);if(!k) return;const same=sg.cell===c.id;if(!same&&!(sg.ring||[]).includes(c.id)) return;
+    const m=1+(sg.level==='f'?.6:.3)*k*(same?1:.35);mult*=m;F&&F.push({t:same?'Majoration signalée ici':'Majoration signalée à côté',sub:(sg.level==='f'?'forte':'légère')+', à '+fmtHM(new Date(sg.at)),v:'× '+fr(m,2)});});
+  if(AUTO.ilevia){mult*=strK;F&&F.push({t:AUTO.ilevia,sub:'détectée dans les messages ilévia',v:'× '+fr(strK,2)});}
+  c.tr.forEach(x=>{const k=AUTO.cancel[x.sid];if(!k||k.c<2||x.w!==1) return;const m=1+Math.min(.35,k.c/Math.max(1,k.n));mult*=m;
+    F&&F.push({t:'Trains supprimés à '+STATIONS[x.sid].name,sub:k.c+' sur '+k.n+' dans les 3 h (temps réel SNCF)',v:'× '+fr(m,2)});});
+  const avail=S.sup*S.tf*AUTO.jam*(S.w.snow?.75:1),supply=avail*supK;
+  const demand=base+add,pressure=demand*mult/supply;
+  const score=Math.max(0,Math.min(99,Math.round(100*(1-Math.exp(-pressure/7)))));
+  if(F){
+    F.push({t:'Chauffeurs disponibles estimés',sub:(S.tf<1?'bouchons de l’heure de pointe, ':'')+(AUTO.jam<1?AUTO.jamTxt+', ':'')+'1 = niveau moyen'+(supK>1.08?' ; file d’attente probable':''),v:fr(supply,2)});
+    F.push({t:'Pression : demande × multiplicateurs ÷ chauffeurs',v:fr(demand,1)+' × '+fr(mult,2)+' ÷ '+fr(supply,2)+' = '+fr(pressure,1),tot:true});
+  }
+  return {score,F,top};
+}
+function level(s){if(s>=80) return ['hot','Majoration probable'];if(s>=65) return ['high','Forte demande'];if(s>=45) return ['mid','Correct'];if(s>=25) return ['low','Calme'];return ['low','Très calme'];}
+const RAMP=[[0,[78,159,161]],[55,[242,180,65]],[80,[232,85,58]],[100,[200,40,40]]];
+function color(s){for(let k=1;k<RAMP.length;k++){if(s<=RAMP[k][0]){const [a,ca]=RAMP[k-1],[b,cb]=RAMP[k],u=(s-a)/(b-a);return 'rgb('+ca.map((v,j)=>Math.round(v+(cb[j]-v)*u)).join(',')+')';}}return 'rgb(200,40,40)';}
+function opacity(s){return s<20?0:s<40?.16:s<65?.3:s<80?.45:.58;}
+
+/* ---------- Rendu ---------- */
+function recompute(){
+  state.signals=state.signals.filter(g=>g.at>Date.now()-3*36e5);
+  buildSlots();
+  cells.forEach(c=>{for(let s=0;s<4;s++) c.sc[s]=calc(c,s,false).score;});
+  if(!state.sel||!cells.some(c=>c.id===state.sel)) state.sel=topCells(state.slot,1)[0].id;
+  renderSlots();styleMap();renderDetail();renderTop();renderLive();renderSrc();
+}
+function topCells(s,n){
+  const sorted=cells.slice().sort((a,b)=>b.sc[s]-a.sc[s]),out=[];
+  for(const c of sorted){if(out.length>=n) break;if(out.some(o=>km(o.lat,o.lng,c.lat,c.lng)<.9)) continue;out.push(c);}
+  return out;
+}
+function styleMap(){
+  const s=state.slot;
+  cells.forEach(c=>{const sc=c.sc[s],op=opacity(sc),sel=c.id===state.sel,col=color(sc);
+    c.poly.setStyle({fillColor:col,fillOpacity:op,color:sel?getComputedStyle(document.documentElement).getPropertyValue('--fg').trim()||'#000':col,weight:sel?3:(sc>=80?1.5:.6),opacity:sel?1:(op?.75:0)});
+    if(sel) c.poly.bringToFront();
+  });
+}
+function renderSlots(){
+  $('#slots').innerHTML=SL.map((S,s)=>'<button type="button" role="tab" data-s="'+s+'" aria-selected="'+(s===state.slot)+'">'+(s===0?'Maintenant':S.t.getHours()+'h')+'</button>').join('');
+}
+function renderDetail(){
+  const c=cells.find(x=>x.id===state.sel);if(!c) return;
+  const r=calc(c,state.slot,true),[cls,lab]=level(r.score),S=SL[state.slot];
+  const dist=state.pos?' · à '+fr(km(state.pos.lat,state.pos.lng,c.lat,c.lng),1)+' km':'';
+  const a=r.top>=0?ANCHORS[r.top]:null;
+  const tip=a&&a.airport?'Petit aéroport : regardez les arrivées de Lille-Lesquin avant d’y aller.'
+    :a&&a.corp?'Siège d’entreprise : les courses partent surtout vers Lille Europe et Lille Flandres (TGV pour Paris), en fin de journée du lundi au jeudi.'
+    :c.tr.some(x=>x.w===1)?'Repérez la dépose-minute et les emplacements VTC de la gare pour ne pas tourner autour.'
+    :a&&(a.mix.nightlife||a.mix.student)&&S.si.idx>=17?'Restez en bordure du secteur, sur un axe qui permet de repartir vite : les rues du centre sont étroites ou piétonnes.'
+    :'Arrivez 10 à 15 minutes avant le pic, pas pendant.';
+  $('#detail').innerHTML='<p class="eyebrow">'+(state.slot===0?'Maintenant':'Prévision '+DAYS[S.t.getDay()]+' '+S.t.getHours()+'h–'+addHours(S.t,1).getHours()+'h')+dist+'</p>'
+    +'<div class="head"><strong>'+esc(c.name)+'</strong><span class="score">'+r.score+'<small>/100</small></span><span class="pill '+cls+'">'+lab+'</span></div>'
+    +'<table class="f"><tbody>'+r.F.map(f=>'<tr'+(f.tot?' class="tot"':'')+'><td>'+esc(f.t)+(f.sub?'<span class="sub">'+esc(f.sub)+'</span>':'')+'</td><td class="v">'+esc(f.v)+'</td></tr>').join('')+'</tbody></table>'
+    +'<p class="tip">'+tip+'</p>'
+    +'<div class="row"><span class="hint">Vous voyez une majoration ici sur Uber ou Bolt ?</span><button type="button" class="btn" data-sig="l">Légère</button><button type="button" class="btn primary" data-sig="f">Forte</button></div>';
+}
+function renderTop(){
+  const s=state.slot;
+  $('#top').innerHTML=topCells(s,6).map(c=>{const r=calc(c,s,true),why=r.F.slice(1).filter(f=>!/^Chauffeurs|^Pression/.test(f.t)).slice(0,2).map(f=>f.t);
+    if(!why.length&&r.F[0]) why.push(r.F[0].sub||r.F[0].t);
+    const dist=state.pos?fr(km(state.pos.lat,state.pos.lng,c.lat,c.lng),1)+' km':'';
+    return '<li><button type="button" data-cell="'+c.id+'" aria-current="'+(c.id===state.sel)+'"><span class="n" style="background:'+color(c.sc[s])+'">'+c.sc[s]+'</span><span class="nm">'+esc(c.name)+'<span class="why">'+esc(why.join(' · '))+'</span></span><span class="km">'+dist+'</span></button></li>';}).join('');
+}
+function renderLive(){
+  const out=[],ok=D.vl.filter(s=>s.ok);
+  if(ok.length){const empty=ok.filter(s=>s.bikes<=1).length,bikes=ok.reduce((m,s)=>m+s.bikes,0);
+    const short=cells.filter(c=>c.vl&&c.vl.n>=2).sort((a,b)=>b.vl.emptyN/b.vl.n-a.vl.emptyN/a.vl.n).slice(0,3).filter(c=>c.vl.emptyN>0);
+    out.push('<div><h3>V’Lille</h3><p class="hint"><span class="big">'+empty+'</span> stations vides sur '+ok.length+' en service · <span class="big">'+bikes.toLocaleString('fr-FR')+'</span> vélos disponibles</p>'+(short.length?'<ul>'+short.map(c=>'<li>'+esc(c.name)+' : '+c.vl.emptyN+'/'+c.vl.n+' stations vides</li>').join('')+'</ul>':'')+'</div>');}
+  if(D.park.length){const top=D.park.filter(p=>p.open).sort((a,b)=>b.occ-a.occ).slice(0,4);
+    out.push('<div><h3>Parkings les plus pleins</h3><ul>'+top.map(p=>'<li>'+esc(p.name)+' : <span class="big">'+Math.round(p.occ*100)+' %</span> ('+p.free+' libres)</li>').join('')+'</ul></div>');}
+  const heavy=D.pert.filter(p=>p.mode!=='bus'&&p.sev!=='info'),bus=D.pert.filter(p=>p.mode==='bus').length;
+  out.push('<div><h3>Circulation</h3><p class="hint">'+(AUTO.jamTxt?esc(AUTO.jamTxt)+' : chauffeurs disponibles × '+fr(AUTO.jam,2):'Pas d’accident ni de bouchon signalé autour de Lille.')+'</p></div>');
+  if(AUTO.ilevia) out.push('<div><h3>Grève</h3><p class="hint">'+esc(AUTO.ilevia)+' : demande augmentée dans toute la métropole.</p></div>');
+  out.push('<div><h3>Métro et tram ilévia</h3>'+(heavy.length?'<ul>'+heavy.map(p=>'<li><b>'+(p.mode==='m1'?'Métro 1':p.mode==='m2'?'Métro 2':'Tram')+'</b>'+(p.fin?' (fin prévue '+fmtHM(p.fin)+')':'')+' : '+esc(p.msg.slice(0,140))+(p.msg.length>140?'…':'')+'</li>').join('')+'</ul>':'<p class="hint">Aucune perturbation sur le métro ni le tram.'+(bus?' '+bus+' info'+(bus>1?'s':'')+' sur les bus.':'')+'</p>')+'</div>');
+  if(D.W){const cellsW=[];for(let s=0;s<4;s++){const w=SL[s].w;cellsW.push('<div><b>'+(s===0?'Maint.':SL[s].t.getHours()+'h')+'</b>'+fr(w.p||0,1)+' mm<br>'+(w.temp!=null?fr(w.temp,0)+' °C':'')+'</div>');}
+    out.push('<div><h3>Météo</h3><div class="wx">'+cellsW.join('')+'</div></div>');}
+  if(D.trains.length){const now=Date.now(),next=D.trains.filter(a=>a.at.getTime()>=now&&a.at.getTime()<now+36e5);
+    const by=Object.keys(STATIONS).map(k=>{const l=next.filter(a=>a.st===k),ok=l.filter(a=>!a.canceled),late=l.filter(a=>a.delay>=10).length,can=l.length-ok.length;
+      return STATIONS[k].name+' : '+ok.length+' train'+(ok.length>1?'s':'')+', ≈ '+fr(Math.round(ok.reduce((m,a)=>m+paxOf(a),0)/50)*50,0)+' voyageurs'+(late?', '+late+' en retard':'')+(can?', '+can+' supprimé'+(can>1?'s':''):'');});
+    out.push('<div><h3>Trains dans l’heure</h3><ul>'+by.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ul></div>');}
+  else out.push('<div><h3>Trains</h3><p class="hint">Les horaires SNCF arrivent dès la première collecte du robot.</p></div>');
+  const S=SL[0],tags=[];if(S.si.note) tags.push(S.si.note);if(S.ctx.feast) tags.push(S.ctx.feast);if(isXmas(S.si.sd)) tags.push('Marché de Noël');if(S.ctx.vacS) tags.push('Vacances scolaires (zone B)');if(S.ctx.uniBreak) tags.push('Vacances universitaires');if(S.ctx.vacStart) tags.push('Départs en vacances');if(S.ctx.vacEnd) tags.push('Retours de vacances');
+  out.push('<div><h3>Calendrier</h3><div class="tags">'+(tags.length?tags:['Jour ordinaire']).map(t=>'<span class="tag">'+esc(t)+'</span>').join('')+'</div></div>');
+  $('#live').innerHTML=out.join('');
+}
+function renderSrc(){
+  const order=['vlille','parking','pert','meteo','trains','traffic','agenda','stops','cal'];
+  $('#srcs').innerHTML=order.filter(k=>SRC[k]).map(k=>{const x=SRC[k];return '<span class="src '+(x.ok?'ok':'err')+'" title="'+esc(x.info)+'"><i></i>'+esc(x.label)+' · '+esc(x.info)+'</span>';}).join('');
+}
+function renderEvents(){
+  const now=Date.now(),soon=D.autoEvents.filter(e=>{const d=parseLocal(e.end);return d&&d.getTime()>now-36e5&&d.getTime()<now+48*36e5;});
+  $('#autoList').innerHTML=soon.length?soon.map(e=>{const d=parseLocal(e.end),pl=PLACE_BY[e.place];return '<li><span><b>'+esc(e.label)+'</b><br><span class="hint">'+esc(pl?pl.short:e.src||'')+(e.kind?' · '+esc(e.kind):'')+' · fin '+DAYS[d.getDay()]+' '+fmtHM(d)+'</span></span></li>';}).join('')
+    :'<li class="empty">'+(SRC.agenda&&SRC.agenda.ok?'Aucun événement détecté dans les 48 h.':'Agenda pas encore collecté.')+'</li>';
+  const list=state.events.slice().sort((a,b)=>parseLocal(a.end)-parseLocal(b.end));
+  $('#evList').innerHTML=list.length?list.map(ev=>{const pl=PLACE_BY[ev.place],d=parseLocal(ev.end);return '<li><span><b>'+esc(ev.label||(pl?pl.name:'Événement'))+'</b><br><span class="hint">'+(pl&&ev.label?esc(pl.name)+' · ':'')+'fin '+DAYS[d.getDay()]+' '+fmtHM(d)+'</span></span><button type="button" class="x" data-ev="'+esc(ev.id)+'">Retirer</button></li>';}).join(''):'<li class="empty">Aucun événement enregistré.</li>';
+}
+function tickClock(){
+  const left=Math.max(0,REFRESH_MS-(Date.now()-lastRefresh));
+  $('#upd').textContent=busy?'Mise à jour…':lastRefresh?'Mis à jour '+fmtHM(new Date(lastRefresh))+' · suivante dans '+Math.floor(left/6e4)+':'+pad(Math.floor(left/1000)%60):'Chargement…';
+  if(!busy&&lastRefresh&&left===0&&document.visibilityState==='visible') refresh();
+}
+
+async function refresh(){
+  if(busy) return;busy=true;$('#refreshBtn').disabled=true;tickClock();
+  await Promise.all([run('vlille','V’Lille',loadVlille),run('parking','Parkings',loadParking),run('pert','Ilévia',loadPert),Date.now()-lastMeteo>METEO_MS?run('meteo','Météo',loadMeteo).then(()=>{if(SRC.meteo.ok) lastMeteo=Date.now();}):null,run('trains','Trains SNCF',loadBot)]);
+  computeAuto();cellLive();recompute();renderEvents();
+  lastRefresh=Date.now();busy=false;$('#refreshBtn').disabled=false;tickClock();
+}
+
+function initMap(){
+  const dark=matchMedia('(prefers-color-scheme: dark)').matches;
+  map=L.map('map',{zoomControl:true,preferCanvas:true,maxBounds:[[50.45,2.75],[50.85,3.45]],minZoom:10}).setView([50.6330,3.0700],13);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(map);
+  if(dark) document.documentElement.classList.add('dark-map');
+  canvas=L.canvas({padding:.4});
+  cells.forEach(c=>{c.poly=L.polygon(h3.cellToBoundary(c.id),{renderer:canvas,weight:.6,fillOpacity:0,opacity:0}).addTo(map);c.poly.on('click',()=>select(c.id,false));});
+  $('#ramp').style.background='linear-gradient(90deg,'+[20,45,65,80,95].map(color).join(',')+')';
+}
+function select(id,fly){
+  state.sel=id;styleMap();renderDetail();renderTop();
+  if(fly){const c=cells.find(x=>x.id===id);if(c) map.flyTo([c.lat,c.lng],Math.max(map.getZoom(),14),{duration:.6});}
+}
+
+function init(){
+  if(!window.L||!window.h3){$('#detail').innerHTML='<p class="err">Les bibliothèques de carte n’ont pas pu se charger. Vérifiez la connexion puis rechargez la page.</p>';return;}
+  buildCells();initMap();
+  $('#evPlace').innerHTML=PLACES.map(p=>'<option value="'+p.id+'">'+esc(p.name)+'</option>').join('');
+  $('#evSize').innerHTML=Object.keys(SIZES).map(k=>'<option value="'+k+'">'+esc(SIZES[k].label)+'</option>').join('');
+  $('#evSize').value=PLACES[0].cap;
+  const now=new Date(),end=new Date(now.getFullYear(),now.getMonth(),now.getDate(),23,0);if(end<=now) end.setDate(end.getDate()+1);$('#evEnd').value=toInput(end);
+  renderEvents();
+
+  $('#refreshBtn').addEventListener('click',refresh);
+  $('#slots').addEventListener('click',e=>{const b=e.target.closest('button[data-s]');if(!b) return;state.slot=+b.dataset.s;renderSlots();styleMap();renderDetail();renderTop();});
+  $('#top').addEventListener('click',e=>{const b=e.target.closest('button[data-cell]');if(b) select(b.dataset.cell,true);});
+  $('#detail').addEventListener('click',e=>{const b=e.target.closest('button[data-sig]');if(!b||!state.sel) return;
+    state.signals=state.signals.filter(g=>g.cell!==state.sel);state.signals.push({id:newId(),cell:state.sel,ring:h3.gridDisk(state.sel,1).filter(x=>x!==state.sel),level:b.dataset.sig,at:Date.now()});
+    store.set('rm-signals',state.signals);state.slot=0;recompute();});
+  $('#locBtn').addEventListener('click',()=>{
+    if(!navigator.geolocation){$('#locBtn').textContent='Position indisponible';return;}
+    $('#locBtn').textContent='Localisation…';
+    navigator.geolocation.getCurrentPosition(p=>{state.pos={lat:p.coords.latitude,lng:p.coords.longitude};$('#locBtn').textContent='Ma position';
+      if(posMarker) posMarker.setLatLng([state.pos.lat,state.pos.lng]);else posMarker=L.circleMarker([state.pos.lat,state.pos.lng],{radius:7,color:'#fff',weight:2,fillColor:'#2F62A8',fillOpacity:1}).addTo(map);
+      renderDetail();renderTop();},()=>{$('#locBtn').textContent='Position refusée';},{enableHighAccuracy:true,timeout:10000,maximumAge:60000});
+  });
+  $('#evPlace').addEventListener('change',e=>{$('#evSize').value=PLACE_BY[e.target.value].cap;});
+  $('#evForm').addEventListener('submit',e=>{e.preventDefault();const end=$('#evEnd').value;if(!parseLocal(end)){$('#evStatus').textContent='Indiquez l’heure de fin.';return;}
+    state.events.push({id:newId(),place:$('#evPlace').value,label:$('#evName').value.trim().slice(0,60),end,size:$('#evSize').value});
+    state.events=state.events.filter(x=>parseLocal(x.end).getTime()>Date.now()-3*36e5);store.set('rm-events',state.events);$('#evName').value='';$('#evStatus').textContent='Ajouté.';renderEvents();recompute();});
+  $('#evList').addEventListener('click',e=>{const b=e.target.closest('button[data-ev]');if(!b) return;state.events=state.events.filter(x=>x.id!==b.dataset.ev);store.set('rm-events',state.events);renderEvents();recompute();});
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-lastRefresh>REFRESH_MS) refresh();});
+
+  Promise.all([run('stops','Arrêts',loadStops),run('cal','Calendrier',loadCalendar)]).then(refresh);
+  setInterval(tickClock,1000);
+}
+init();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+# Données produites par le robot : publiées sur la branche « data », pas sur main
+data/
+__pycache__/
