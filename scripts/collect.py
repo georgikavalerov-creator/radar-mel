@@ -8,9 +8,11 @@
   events.json    agenda Zénith, Lille Grand Palais et matchs du LOSC à domicile (une fois par jour)
   charging.json  occupation des bornes de recharge de la MEL (temps réel)
   irve_mel.json  position et puissance des points de charge de la MEL (une fois par jour)
+  baseline.json  historique appris : moyenne et écart-type par station, type de jour et heure
+  anomaly.json   l'historique pour l'heure en cours et la suivante, lu par l'appli
 Aucune clé d'API n'est nécessaire.
 """
-import argparse, collections, csv, datetime as dt, html, io, json, os, re, sys, urllib.request, zipfile
+import argparse, collections, csv, datetime as dt, html, io, json, math, os, re, sys, urllib.request, zipfile
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo('Europe/Paris')
@@ -22,6 +24,9 @@ RT_URL = 'https://proxy.transport.data.gouv.fr/resource/sncf-gtfs-rt-trip-update
 BF_URL = 'https://tipi.bison-fute.gouv.fr/bison-fute-ouvert/publicationsDIR/Evenementiel-DIR/grt/RRN/content.xml'
 IRVE_STATIC = 'https://proxy.transport.data.gouv.fr/resource/consolidation-transport-irve-statique'
 IRVE_DYN = 'https://proxy.transport.data.gouv.fr/resource/consolidation-nationale-irve-dynamique'
+GEO = 'https://data.lillemetropole.fr/geoserver/ogc/features/v1/collections/'
+VL_URL = GEO + 'dsp_ilevia:vlille_temps_reel/items?f=json&limit=1000'
+PK_URL = GEO + 'mel_mobilite_et_transport:parking/items?f=json&limit=200'
 MONTHS = {'janv': 1, 'janvier': 1, 'févr': 2, 'février': 2, 'mars': 3, 'avr': 4, 'avril': 4, 'mai': 5, 'juin': 6,
           'juil': 7, 'juillet': 7, 'août': 8, 'sept': 9, 'septembre': 9, 'oct': 10, 'octobre': 10,
           'nov': 11, 'novembre': 11, 'déc': 12, 'décembre': 12}
@@ -190,7 +195,8 @@ def charging(out):
         if not p or row.get('etat_pdc') == 'hors_service':
             continue
         lat, lng, kw, sid = p
-        s = st.setdefault(sid or '%s,%s' % (lat, lng), {'lat': lat, 'lng': lng, 'n': 0, 'occ': 0, 'unk': 0, 'fast': 0, 'fastOcc': 0})
+        k = sid or '%s,%s' % (lat, lng)
+        s = st.setdefault(k, {'k': k, 'lat': lat, 'lng': lng, 'n': 0, 'occ': 0, 'unk': 0, 'fast': 0, 'fastOcc': 0})
         occ = row.get('occupation_pdc') in ('occupe', 'reserve')
         s['n'] += 1
         s['occ'] += occ
@@ -201,6 +207,88 @@ def charging(out):
     stations = list(st.values())
     total = {k: sum(s[k] for s in stations) for k in ('n', 'occ', 'unk', 'fast', 'fastOcc')}
     return {'stations': stations, 'total': total}
+
+
+# ---------- Historique appris (lignes de base) ----------
+def easter(y):
+    a, b, c = y % 19, y // 100, y % 100
+    d, e, f = b // 4, b % 4, (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    n = h + l - 7 * m + 114
+    return dt.date(y, n // 31, n % 31 + 1)
+
+
+def holiday(d):
+    e = easter(d.year)
+    return (d.month, d.day) in {(1, 1), (5, 1), (5, 8), (7, 14), (8, 15), (11, 1), (11, 11), (12, 25)} or \
+        d in {e + dt.timedelta(days=x) for x in (1, 39, 50)}
+
+
+def slot_of(t):
+    """Créneau d'historique : type de jour (sem = lundi à jeudi, ven, sam, dim ou férié) et heure."""
+    kind = 'dim' if holiday(t.date()) else ['sem', 'sem', 'sem', 'sem', 'ven', 'sam', 'dim'][t.weekday()]
+    return '%s-%02d' % (kind, t.hour)
+
+
+def observe(out):
+    """Valeurs du moment : vélos par station V'Lille, taux d'occupation des parkings et des bornes de recharge."""
+    obs = {'vl': {}, 'pk': {}, 'ch': {}}
+    for f in json.loads(get(VL_URL)).get('features', []):
+        p = f.get('properties') or {}
+        if p.get('etat') == 'EN SERVICE' and p.get('etat_connexion') == 'CONNECTÉ':
+            obs['vl'][str(p['identifiant_station'])] = float(p.get('nb_velos_dispo') or 0)
+    for f in json.loads(get(PK_URL)).get('features', []):
+        p = f.get('properties') or {}
+        tot = float(p.get('nbr_total') or 0)
+        if tot > 0 and (p.get('etat') or '').upper() == 'OUVERT':
+            obs['pk'][(p.get('nom') or '').strip()] = round(1 - max(0.0, float(p.get('nbr_libre') or 0)) / tot, 3)
+    try:
+        with open(os.path.join(out, 'charging.json'), encoding='utf-8') as fh:
+            for s in json.load(fh).get('stations', []):
+                known = s['n'] - s['unk']
+                if known >= 2:
+                    obs['ch'][s['k']] = round(s['occ'] / known, 3)
+    except (OSError, KeyError, ValueError):
+        pass
+    return obs
+
+
+def baselines(out):
+    """Moyenne et variance exponentielles par station × créneau ; renvoie l'historique AVANT la mesure du moment."""
+    path = os.path.join(out, 'baseline.json')
+    try:
+        with open(path, encoding='utf-8') as fh:
+            base = json.load(fh)
+    except (OSError, ValueError):
+        base = {}
+    for kind in ('vl', 'pk', 'ch'):
+        base.setdefault(kind, {})
+    t = now()
+    cur, nxt = slot_of(t), slot_of(t + dt.timedelta(hours=1))
+    obs = observe(out)
+    view = {'slots': [cur, nxt], 'vl': {}, 'pk': {}, 'ch': {}}
+    for kind, values in obs.items():
+        for key, x in values.items():
+            rec = base[kind].setdefault(key, {})
+            m, v, n = rec.get(cur, [x, 0.0, 0])
+            nx = rec.get(nxt)
+            if n:
+                view[kind][key] = [[m, round(math.sqrt(v), 3), n], [nx[0], round(math.sqrt(nx[1]), 3), nx[2]] if nx else None]
+            if n == 0:
+                m, v = x, 0.0
+            else:
+                a = max(1.0 / (n + 1), 0.05)  # moyenne simple au début, puis oubli progressif (5 %)
+                d = x - m
+                m += a * d
+                v = (1 - a) * (v + a * d * d)
+            rec[cur] = [round(m, 3), round(v, 4), min(n + 1, 99999)]
+    data = dict(base)
+    save(out, 'baseline.json', data)
+    return view
 
 
 # ---------- Agenda ----------
@@ -317,6 +405,7 @@ def main():
     if a.daily or stale(a.out, 'irve_mel.json'):
         jobs.append(('irve_mel.json', irve_static))
     jobs.append(('charging.json', lambda: charging(a.out)))
+    jobs.append(('anomaly.json', lambda: baselines(a.out)))
     failed = 0
     for name, fn in jobs:
         try:

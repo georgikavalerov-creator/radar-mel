@@ -171,6 +171,7 @@ ol.top .km{font-family:var(--f-data);font-size:12px;color:var(--muted)}
         <li><b>Grèves et circulation</b> : détectées sans intervention, à partir des messages ilévia (grève, bus déviés pour accident ou bouchon), des trains supprimés et des événements Bison Futé.</li>
         <li><b>Demande habituelle</b> par quartier, heure et jour : jeudi soir étudiant, gares le vendredi et le dimanche soir, sorties de bureaux, fin du métro.</li>
         <li><b>Sièges du groupe Mulliez</b> (Decathlon, Auchan, Leroy Merlin, Boulanger, Kiabi, Norauto, Saint Maclou, Oney, Jules, Nhood, Agapes, Electro Dépôt, Tape à l'œil) : arrivées le matin et départs vers les gares en fin de journée, en semaine. Leurs réunions ne sont pas publiques : si vous en connaissez une, ajoutez-la dans Événements (lieu « Réunion, séminaire »).</li>
+        <li><b>Calcul</b> : chaque station V'Lille, parking et borne est comparée à sa moyenne apprise pour ce type de jour et cette heure (écart en écarts-types). Le radar s'appuie sur ces écarts plutôt que sur les valeurs brutes, de plus en plus à mesure que l'historique grandit. La tendance des vélos vient d'une régression sur 30 minutes, les sorties d'événement suivent une courbe réaliste sur 90 minutes, et chaque hexagone est lissé avec ses 6 voisins. Vos signalements de majoration sont retenus 60 jours et renforcent le même secteur au même moment de la semaine.</li>
         <li><b>Score</b> = demande estimée × multiplicateurs (pluie, panne de métro, majoration signalée) ÷ chauffeurs disponibles estimés. Chaque terme est affiché avec sa valeur.</li>
         <li><b>Limites</b> : Uber et Bolt ne publient ni leurs demandes ni le nombre de chauffeurs connectés, et la SNCF ne publie pas le remplissage des trains. Les voyageurs sont estimés à partir du type de train (places × 70 % en TGV, 35 % en TER, dont 40 % qui descendent quand Lille n'est pas le terminus). Le score reste une estimation, pas une mesure exacte.</li>
       </ul>
@@ -353,9 +354,14 @@ function anchorDemand(a,si,ctx){
 }
 
 /* ---------- État ---------- */
-const D={vl:[],vlHist:store.get('rm-vlhist',[]),park:[],pert:[],metro:[],tram:[],trains:[],traffic:[],autoEvents:[],charge:[],chargeTotal:null,W:null};
+const D={vl:[],vlHist:store.get('rm-vlhist',[]),park:[],pert:[],metro:[],tram:[],trains:[],traffic:[],autoEvents:[],charge:[],chargeTotal:null,base:null,W:null};
 const SRC={};
-const state={events:store.get('rm-events',[]),signals:store.get('rm-signals',[]),slot:0,sel:null,pos:null};
+const state={events:store.get('rm-events',[]),signals:store.get('rm-signals',[]),hist:store.get('rm-sighist',[]),slot:0,sel:null,pos:null};
+/* Créneau d'historique, identique à celui du robot : sem (lundi à jeudi), ven, sam, dim ou férié, plus l'heure. */
+const dayKind=t=>isHoliday(t)?'dim':['dim','sem','sem','sem','sem','ven','sam'][t.getDay()];
+const slotOf=t=>dayKind(t)+'-'+pad(t.getHours());
+function baseOf(kind,key,t){const B=D.base;if(!B||!B[kind]) return null;const i=B.slots.indexOf(slotOf(t)),r=B[kind][key];return i>=0&&r&&r[i]?r[i]:null;}
+const scoreOf=p=>Math.max(0,Math.min(99,Math.round(100*(1-Math.exp(-p/7)))));
 /* Conditions détectées automatiquement (grève, trains supprimés, circulation). */
 const AUTO={ilevia:'',cancel:{},jam:1,jamTxt:'',chargeF:1,chargeTxt:''};
 /* Données du robot : branche « data » du dépôt une fois en ligne, dossier data/ en local. */
@@ -408,7 +414,10 @@ function loadMeteo(){return getJSON('https://api.open-meteo.com/v1/forecast?lati
 function age(u){const d=parseLocal(u);if(!d) return '';const m=Math.round((Date.now()-d)/6e4);return m<=1?'':m<90?', il y a '+m+' min':', '+DAYS[d.getDay()]+' '+fmtHM(d);}
 function loadBot(){
   const g=n=>getJSON(DATA_BASE+n+'?t='+Math.floor(Date.now()/6e4)).catch(()=>null);
-  return Promise.all([g('schedule.json'),g('rt.json'),g('traffic.json'),g('events.json'),g('charging.json')]).then(([sc,rt,tf,ev,ch])=>{
+  return Promise.all([g('schedule.json'),g('rt.json'),g('traffic.json'),g('events.json'),g('charging.json'),g('anomaly.json')]).then(([sc,rt,tf,ev,ch,an])=>{
+    D.base=an&&an.slots?an:null;
+    const ns=an&&an.vl?Object.values(an.vl).map(r=>r[0]&&r[0][2]).filter(Boolean).sort((a,b)=>a-b):[];
+    SRC.hist={ok:!!ns.length,label:'Historique appris',info:ns.length?ns[ns.length>>1]+' relevés par station à cette heure':'en cours de constitution'};
     D.charge=(ch&&ch.stations)||[];D.chargeTotal=ch&&ch.total;
     SRC.charge={ok:!!ch,label:'Bornes de recharge',info:ch&&ch.total?ch.total.occ+' occupées sur '+ch.total.n+age(ch.updated):'pas encore collecté'};
     SRC.traffic={ok:!!tf,label:'Trafic Bison Futé',info:tf?(tf.events||[]).length+' signalement'+((tf.events||[]).length>1?'s':'')+age(tf.updated):'pas encore collecté'};
@@ -472,28 +481,47 @@ function buildCells(){
   const ids=h3.polygonToCells([[50.55,2.92],[50.55,3.27],[50.76,3.27],[50.76,2.92]],8);
   cells=ids.map(id=>{const [lat,lng]=h3.cellToLatLng(id);
     const aw=[];ANCHORS.forEach((a,i)=>{const d=km(lat,lng,a.lat,a.lng),w=Math.exp(-(d/a.r)*(d/a.r));if(w>.02) aw.push({i,w});});
-    return {id,lat,lng,aw,sc:[0,0,0,0]};
+    return {id,lat,lng,aw,sc:[0,0,0,0],dsm:[0,0,0,0]};
   });
+  const idx=new Map(cells.map((c,i)=>[c.id,i]));
+  cells.forEach(c=>{const ring=h3.gridDisk(c.id,1);c.ring=new Set(ring);c.nbIdx=ring.filter(x=>x!==c.id&&idx.has(x)).map(x=>idx.get(x));});
+}
+/* Tendance V'Lille : pente des moindres carrés (vélos par minute) sur les 30 dernières minutes, station par station. */
+function vlSlopes(now){
+  const H=D.vlHist.filter(h=>h.at>=now-31*6e4),out={};if(H.length<3) return out;
+  Object.keys(H[H.length-1].m).forEach(id=>{let n=0,sx=0,sy=0,sxx=0,sxy=0;
+    H.forEach(h=>{const y=h.m[id];if(y==null) return;const x=(h.at-now)/6e4;n++;sx+=x;sy+=y;sxx+=x*x;sxy+=x*y;});
+    const den=n*sxx-sx*sx;if(n>=3&&den>0) out[id]=(n*sxy-sx*sy)/den;});
+  return out;
 }
 function cellLive(){
   const now=Date.now(),old=D.vlHist.filter(h=>h.at<=now-10*6e4).pop(),dmin=old?Math.round((now-old.at)/6e4):0;
   const okSt=D.vl.filter(s=>s.ok),lines={m1:'1',m2:'2'};
   const hit=D.pert.filter(p=>p.mode!=='bus'&&p.sev!=='info');
+  const slope=vlSlopes(now),nowT=new Date();
   cells.forEach(c=>{
-    let n=0,emptyN=0,empty=0,bikes=0,delta=0,hasOld=false,best=null,bestD=9;
+    let n=0,emptyN=0,empty=0,bikes=0,delta=0,hasOld=false,best=null,bestD=9,tr=0,hasTr=false,def=0,vs=0,nb=0,nmin=1e9;
     for(const s of D.vl){const d=km(c.lat,c.lng,s.lat,s.lng);if(d<bestD){bestD=d;best=s;}}
     for(const s of okSt){const d=km(c.lat,c.lng,s.lat,s.lng);if(d>.8) continue;const w=d<=.5?1:.5;
-      if(d<=.5){n++;bikes+=s.bikes;if(s.bikes<=1) emptyN++;}
+      if(d<=.5){n++;bikes+=s.bikes;if(s.bikes<=1) emptyN++;
+        if(slope[s.id]!=null){tr+=slope[s.id];hasTr=true;}
+        const b=baseOf('vl',String(s.id),nowT);if(b&&b[2]>=8){def+=b[0]-s.bikes;vs+=Math.max(b[1],1)**2;nb++;nmin=Math.min(nmin,b[2]);}}
       if(s.bikes<=1) empty+=w;
       if(old&&d<=.5&&old.m[s.id]!=null){delta+=s.bikes-old.m[s.id];hasOld=true;}
     }
-    c.vl=n||empty?{n,emptyN,empty,bikes,delta:hasOld&&dmin<=40?delta:null,dmin}:null;
+    c.vl=n||empty?{n,emptyN,empty,bikes,delta:hasOld&&dmin<=40?delta:null,dmin,trend:hasTr?tr*15:null}:null;
+    /* Écart à l'habituel : vélos manquants par rapport à la moyenne apprise, en écarts-types (somme des variances). */
+    c.vlA=nb?{def,z:def/Math.sqrt(vs),nb,nmin}:null;
     c.name=best&&bestD<.7?titleCase(best.name):nearestAnchor(c).name;
     c.pk=D.park.filter(p=>p.open&&km(c.lat,c.lng,p.lat,p.lng)<.6);
     c.dis=[];
     hit.forEach(p=>{const pts=p.mode==='tram'?D.tram:D.metro.filter(s=>s.line===lines[p.mode]);if(pts.some(s=>km(c.lat,c.lng,s.lat,s.lng)<.6)) c.dis.push(p);});
     c.tr=[];Object.entries(STATIONS).forEach(([sid,st])=>{const d=km(c.lat,c.lng,st.lat,st.lng);if(d<.8) c.tr.push({sid,w:d<.4?1:.5});});
-    c.ch={n:0,occ:0};D.charge.forEach(s=>{if(km(c.lat,c.lng,s.lat,s.lng)<.8){c.ch.n+=s.n-s.unk;c.ch.occ+=s.occ;}});
+    c.ch={n:0,occ:0};let ex=0,cv=0,cb=0;
+    D.charge.forEach(s=>{if(km(c.lat,c.lng,s.lat,s.lng)>=.8) return;const known=s.n-s.unk;c.ch.n+=known;c.ch.occ+=s.occ;
+      const b=baseOf('ch',s.k,nowT);if(b&&b[2]>=8&&known>=2){ex+=(s.occ/known-b[0])*known;cv+=(Math.max(b[1],.05)*known)**2;cb++;}});
+    c.chA=cb?{excess:ex,z:ex/Math.sqrt(cv)}:null;
+    c.pkA=c.pk.map(p=>{const b=baseOf('pk',p.name,nowT);if(!b||b[2]<8) return null;const sd=Math.max(b[1],.03);return {p,m:b[0],z:(p.occ-b[0])/sd,n:b[2]};}).filter(Boolean);
   });
 }
 function nearestAnchor(c){let b=ANCHORS[0],bd=99;ANCHORS.forEach(a=>{const d=km(c.lat,c.lng,a.lat,a.lng);if(d<bd){bd=d;b=a;}});return b;}
@@ -518,7 +546,12 @@ function buildSlots(){
     return {t,si,ctx,ad:ANCHORS.map(a=>anchorDemand(a,si,ctx)),sp,spm:sp.map(l=>l.reduce((m,x)=>m*x.m,1)),w:weatherFor(t,s===0,si.idx),sup:supplyAt(si.kind,si.idx),tf:traffic(si,ctx),win:s===0?[t.getTime()-10*6e4,t.getTime()+50*6e4]:[t.getTime(),t.getTime()+36e5]};
   });
 }
-function evWeight(ev,a,b){const e=parseLocal(ev.end);if(!e) return 0;const x=Math.max(a,e.getTime()-20*6e4),y=Math.min(b,e.getTime()+70*6e4);return y>x?(y-x)/36e5:0;}
+/* Répartition des sorties d'un événement : 10 % dans les 20 min avant la fin, 55 % dans la demi-heure qui suit,
+   25 % de 30 à 60 min, 10 % de 60 à 90 min. Le poids est la part qui sort dans la fenêtre, ramenée à 1 au maximum. */
+const EXIT=[[-20,0,.10],[0,30,.55],[30,60,.25],[60,90,.10]];
+function evWeight(ev,a,b){const e=parseLocal(ev.end);if(!e) return 0;let f=0;
+  EXIT.forEach(([x,y,p])=>{const s=e.getTime()+x*6e4,t=e.getTime()+y*6e4,o=Math.min(b,t)-Math.max(a,s);if(o>0) f+=p*o/(t-s);});
+  return f/.85;}
 function signalK(sg,t){const h0=new Date(sg.at);h0.setMinutes(0,0,0);const d=Math.floor((t.getTime()-h0.getTime())/36e5);return d===0?1:d===1?.5:d===2?.2:0;}
 function calc(c,s,detail){
   const S=SL[s],F=detail?[]:null;
@@ -529,13 +562,23 @@ function calc(c,s,detail){
   if(F){const R=[];if(top>=0){baseReasons(ANCHORS[top].mix,S.si,S.ctx,R);S.sp[top].forEach(x=>R.push(x));}R.sort((a,b)=>b.w-a.w);
     F.push({t:'Demande habituelle'+(top>=0?' · '+ANCHORS[top].name:''),sub:DAYS[S.t.getDay()]+' '+S.t.getHours()+'h'+(R.length?' : '+R.slice(0,2).map(r=>r.t).join(', '):''),v:fr(base,1)});}
   let add=0;const kv=[1,.5,.2,0][s];
+  const conf=c.vlA?Math.min(1,c.vlA.nmin/30):0;
+  if(c.vlA&&kv&&c.vlA.z>=1.5&&c.vlA.def>=3){const v=Math.min(3,(c.vlA.z-1)*.8)*kv;add+=v;
+    F&&F.push({t:'V’Lille : '+fr(c.vlA.def,0)+' vélos de moins que d’habitude',sub:'pour ce type de jour à cette heure : +'+fr(c.vlA.z,1)+' écarts-types, '+c.vlA.nmin+' relevés appris',v:'+'+fr(v,1)});}
   if(c.vl&&kv){
-    if(c.vl.emptyN>=1){const v=Math.min(4,c.vl.emptyN*.7+c.vl.emptyN/c.vl.n*1.5)*kv;add+=v;F&&F.push({t:'V’Lille : '+c.vl.emptyN+' station'+(c.vl.emptyN>1?'s':'')+' vide'+(c.vl.emptyN>1?'s':'')+' sur '+c.vl.n,sub:c.vl.bikes+' vélo'+(c.vl.bikes>1?'s':'')+' disponible'+(c.vl.bikes>1?'s':'')+' à moins de 500 m',v:'+'+fr(v,1)});}
-    if(c.vl.delta!=null&&c.vl.delta<=-4){const v=Math.min(3,-c.vl.delta*.15)*kv;add+=v;F&&F.push({t:'V’Lille : '+c.vl.delta+' vélos en '+c.vl.dmin+' min',sub:'les gens quittent le secteur',v:'+'+fr(v,1)});}
+    /* Plus l'historique est riche, moins le simple comptage des stations vides pèse. */
+    if(c.vl.emptyN>=1){const v=Math.min(4,c.vl.emptyN*.7+c.vl.emptyN/c.vl.n*1.5)*kv*(1-.6*conf);add+=v;F&&F.push({t:'V’Lille : '+c.vl.emptyN+' station'+(c.vl.emptyN>1?'s':'')+' vide'+(c.vl.emptyN>1?'s':'')+' sur '+c.vl.n,sub:c.vl.bikes+' vélo'+(c.vl.bikes>1?'s':'')+' disponible'+(c.vl.bikes>1?'s':'')+' à moins de 500 m',v:'+'+fr(v,1)});}
+    if(c.vl.trend!=null&&c.vl.trend<=-4){const v=Math.min(3,-c.vl.trend*.15)*kv;add+=v;F&&F.push({t:'V’Lille : tendance '+fr(c.vl.trend,0)+' vélos par quart d’heure',sub:'régression sur les 30 dernières minutes : les gens quittent le secteur',v:'+'+fr(v,1)});}
   }
-  if(c.pk.length){const pkk=[.5,.9,.6,.3][s];let v=0,bestP=null;c.pk.forEach(p=>{if(p.occ>=.8){const x=(p.occ-.7)/.3*1.5;if(x>v){v=x;bestP=p;}}});
+  const pkk=[.5,.9,.6,.3][s];
+  if(c.pkA.length){const a=c.pkA.reduce((m,x)=>x.z>m.z?x:m,c.pkA[0]);
+    if(a.z>=1.5){const v=Math.min(2,(a.z-1)*.7)*pkk;add+=v;
+      F&&F.push({t:'Parking '+a.p.name+' : '+Math.round(a.p.occ*100)+' % plein, d’habitude '+Math.round(a.m*100)+' %',sub:'+'+fr(a.z,1)+' écarts-types ; plus de monde que d’ordinaire, qui repartira',v:'+'+fr(v,1)});}}
+  else if(c.pk.length){let v=0,bestP=null;c.pk.forEach(p=>{if(p.occ>=.8){const x=(p.occ-.7)/.3*1.5;if(x>v){v=x;bestP=p;}}});
     if(bestP){v*=pkk;add+=v;F&&F.push({t:'Parking '+bestP.name+' : '+Math.round(bestP.occ*100)+' % plein',sub:bestP.free+' places libres sur '+bestP.total+(s===0?' ; les gens repartiront plus tard':''),v:'+'+fr(v,1)});}}
-  if(c.ch&&c.ch.n>=6&&c.ch.occ/c.ch.n>=.4){const v=Math.min(1.2,c.ch.occ*.05)*[.5,.8,.6,.3][s];add+=v;
+  if(c.chA){if(c.chA.z>=1.5&&c.chA.excess>=2){const v=Math.min(1.2,c.chA.excess*.15)*pkk;add+=v;
+    F&&F.push({t:'Bornes de recharge : '+fr(c.chA.excess,0)+' voitures de plus que d’habitude',sub:'à moins de 800 m, +'+fr(c.chA.z,1)+' écarts-types',v:'+'+fr(v,1)});}}
+  else if(c.ch&&c.ch.n>=6&&c.ch.occ/c.ch.n>=.4){const v=Math.min(1.2,c.ch.occ*.05)*[.5,.8,.6,.3][s];add+=v;
     F&&F.push({t:'Bornes de recharge : '+c.ch.occ+' occupées sur '+c.ch.n,sub:'à moins de 800 m ; voitures garées, leurs occupants repartiront',v:'+'+fr(v,1)});}
   if(c.tr.length&&D.trains.length){c.tr.forEach(x=>{const arr=D.trains.filter(a=>a.st===x.sid&&a.at.getTime()>=S.win[0]&&a.at.getTime()<S.win[1]);if(!arr.length) return;
     /* Poids des voyageurs dans la demande VTC : 1 point pour 800 en TGV, OUIGO ou Eurostar, pour 2 500 en TER. */
@@ -550,17 +593,18 @@ function calc(c,s,detail){
     F&&F.push({t:(p.mode==='m1'?'Métro 1':p.mode==='m2'?'Métro 2':'Tram')+(stop?' interrompu':' perturbé'),sub:'ilévia'+(p.fin?', fin prévue '+fmtHM(p.fin):''),v:'× '+fr(m,2)});}}
   state.signals.forEach(sg=>{const k=signalK(sg,S.t);if(!k) return;const same=sg.cell===c.id;if(!same&&!(sg.ring||[]).includes(c.id)) return;
     const m=1+(sg.level==='f'?.6:.3)*k*(same?1:.35);mult*=m;F&&F.push({t:same?'Majoration signalée ici':'Majoration signalée à côté',sub:(sg.level==='f'?'forte':'légère')+', à '+fmtHM(new Date(sg.at)),v:'× '+fr(m,2)});});
+  /* Apprentissage : majorations que vous avez signalées ici (ou juste à côté), même type de jour, à une heure près. */
+  const dk=dayKind(S.t),hh=S.t.getHours(),past=state.hist.filter(x=>x.at<Date.now()-3*36e5&&c.ring.has(x.cell)&&x.dk===dk&&Math.min(Math.abs(x.h-hh),24-Math.abs(x.h-hh))<=1).length;
+  if(past){const m=1+.12*Math.min(4,past);mult*=m;F&&F.push({t:'Majorations déjà vues ici',sub:past+' fois un '+({sem:'jour de semaine',ven:'vendredi',sam:'samedi',dim:'dimanche ou férié'})[dk]+' vers '+hh+'h (vos signalements)',v:'× '+fr(m,2)});}
   if(AUTO.ilevia){mult*=strK;F&&F.push({t:AUTO.ilevia,sub:'détectée dans les messages ilévia',v:'× '+fr(strK,2)});}
   c.tr.forEach(x=>{const k=AUTO.cancel[x.sid];if(!k||k.c<2||x.w!==1) return;const m=1+Math.min(.35,k.c/Math.max(1,k.n));mult*=m;
     F&&F.push({t:'Trains supprimés à '+STATIONS[x.sid].name,sub:k.c+' sur '+k.n+' dans les 3 h (temps réel SNCF)',v:'× '+fr(m,2)});});
   const avail=S.sup*S.tf*AUTO.jam*AUTO.chargeF*(S.w.snow?.75:1),supply=avail*supK;
-  const demand=base+add,pressure=demand*mult/supply;
-  const score=Math.max(0,Math.min(99,Math.round(100*(1-Math.exp(-pressure/7)))));
+  const demand=base+add,score=scoreOf(demand*mult/supply);
   if(F){
     F.push({t:'Chauffeurs disponibles estimés',sub:(S.tf<1?'bouchons de l’heure de pointe, ':'')+(AUTO.jam<1?AUTO.jamTxt+', ':'')+(AUTO.chargeF<1?AUTO.chargeTxt+', ':'')+'1 = niveau moyen'+(supK>1.08?' ; file d’attente probable':''),v:fr(supply,2)});
-    F.push({t:'Pression : demande × multiplicateurs ÷ chauffeurs',v:fr(demand,1)+' × '+fr(mult,2)+' ÷ '+fr(supply,2)+' = '+fr(pressure,1),tot:true});
   }
-  return {score,F,top};
+  return {score,F,top,demand,mult,supply};
 }
 function level(s){if(s>=80) return ['hot','Majoration probable'];if(s>=65) return ['high','Forte demande'];if(s>=45) return ['mid','Correct'];if(s>=25) return ['low','Calme'];return ['low','Très calme'];}
 const RAMP=[[0,[78,159,161]],[55,[242,180,65]],[80,[232,85,58]],[100,[200,40,40]]];
@@ -571,7 +615,13 @@ function opacity(s){return s<20?0:s<40?.16:s<65?.3:s<80?.45:.58;}
 function recompute(){
   state.signals=state.signals.filter(g=>g.at>Date.now()-3*36e5);
   buildSlots();
-  cells.forEach(c=>{for(let s=0;s<4;s++) c.sc[s]=calc(c,s,false).score;});
+  /* Lissage spatial H3 : chaque hexagone garde 75 % de sa demande et reçoit 25 % de la moyenne de ses 6 voisins. */
+  for(let s=0;s<4;s++){
+    const R=cells.map(c=>calc(c,s,false));
+    cells.forEach((c,i)=>{const r=R[i];let nb=0;c.nbIdx.forEach(j=>{nb+=R[j].demand;});
+      const d=c.nbIdx.length?.75*r.demand+.25*nb/c.nbIdx.length:r.demand;
+      c.dsm[s]=d;c.sc[s]=scoreOf(d*r.mult/r.supply);});
+  }
   if(!state.sel||!cells.some(c=>c.id===state.sel)) state.sel=topCells(state.slot,1)[0].id;
   renderSlots();styleMap();renderDetail();renderTop();renderLive();renderSrc();
 }
@@ -592,7 +642,11 @@ function renderSlots(){
 }
 function renderDetail(){
   const c=cells.find(x=>x.id===state.sel);if(!c) return;
-  const r=calc(c,state.slot,true),[cls,lab]=level(r.score),S=SL[state.slot];
+  const r=calc(c,state.slot,true),sc=c.sc[state.slot],dsm=c.dsm[state.slot],[cls,lab]=level(sc),S=SL[state.slot];
+  if(Math.abs(dsm-r.demand)>=.1) r.F.splice(r.F.length-1,0,{t:'Secteurs voisins (lissage H3)',sub:'25 % de la demande moyenne des 6 hexagones autour',v:(dsm>r.demand?'+':'−')+fr(Math.abs(dsm-r.demand),1)});
+  r.F.push({t:'Pression : demande × multiplicateurs ÷ chauffeurs',v:fr(dsm,1)+' × '+fr(r.mult,2)+' ÷ '+fr(r.supply,2)+' = '+fr(dsm*r.mult/r.supply,1),tot:true});
+  const okN=Object.values(SRC).filter(x=>x.ok).length,totN=Object.keys(SRC).length,hn=c.vlA?c.vlA.nmin:0;
+  const rel=(okN>=totN-1&&hn>=40?'bonne':okN>=totN-3&&hn>=8?'moyenne':'en apprentissage')+' · '+okN+'/'+totN+' sources à jour · '+(hn?'historique de '+hn+' relevés à cette heure':'historique en cours de constitution');
   const dist=state.pos?' · à '+fr(km(state.pos.lat,state.pos.lng,c.lat,c.lng),1)+' km':'';
   const a=r.top>=0?ANCHORS[r.top]:null;
   const tip=a&&a.airport?'Petit aéroport : regardez les arrivées de Lille-Lesquin avant d’y aller.'
@@ -601,7 +655,8 @@ function renderDetail(){
     :a&&(a.mix.nightlife||a.mix.student)&&S.si.idx>=17?'Restez en bordure du secteur, sur un axe qui permet de repartir vite : les rues du centre sont étroites ou piétonnes.'
     :'Arrivez 10 à 15 minutes avant le pic, pas pendant.';
   $('#detail').innerHTML='<p class="eyebrow">'+(state.slot===0?'Maintenant':'Prévision '+DAYS[S.t.getDay()]+' '+S.t.getHours()+'h–'+addHours(S.t,1).getHours()+'h')+dist+'</p>'
-    +'<div class="head"><strong>'+esc(c.name)+'</strong><span class="score">'+r.score+'<small>/100</small></span><span class="pill '+cls+'">'+lab+'</span></div>'
+    +'<div class="head"><strong>'+esc(c.name)+'</strong><span class="score">'+sc+'<small>/100</small></span><span class="pill '+cls+'">'+lab+'</span></div>'
+    +'<p class="hint">Fiabilité : '+rel+'</p>'
     +'<table class="f"><tbody>'+r.F.map(f=>'<tr'+(f.tot?' class="tot"':'')+'><td>'+esc(f.t)+(f.sub?'<span class="sub">'+esc(f.sub)+'</span>':'')+'</td><td class="v">'+esc(f.v)+'</td></tr>').join('')+'</tbody></table>'
     +'<p class="tip">'+tip+'</p>'
     +'<div class="row"><span class="hint">Vous voyez une majoration ici sur Uber ou Bolt ?</span><button type="button" class="btn" data-sig="l">Légère</button><button type="button" class="btn primary" data-sig="f">Forte</button></div>';
@@ -638,7 +693,7 @@ function renderLive(){
   $('#live').innerHTML=out.join('');
 }
 function renderSrc(){
-  const order=['vlille','parking','pert','meteo','trains','traffic','agenda','charge','stops','cal'];
+  const order=['vlille','parking','pert','meteo','trains','traffic','agenda','charge','hist','stops','cal'];
   $('#srcs').innerHTML=order.filter(k=>SRC[k]).map(k=>{const x=SRC[k];return '<span class="src '+(x.ok?'ok':'err')+'" title="'+esc(x.info)+'"><i></i>'+esc(x.label)+' · '+esc(x.info)+'</span>';}).join('');
 }
 function renderEvents(){
@@ -689,7 +744,8 @@ function init(){
   $('#top').addEventListener('click',e=>{const b=e.target.closest('button[data-cell]');if(b) select(b.dataset.cell,true);});
   $('#detail').addEventListener('click',e=>{const b=e.target.closest('button[data-sig]');if(!b||!state.sel) return;
     state.signals=state.signals.filter(g=>g.cell!==state.sel);state.signals.push({id:newId(),cell:state.sel,ring:h3.gridDisk(state.sel,1).filter(x=>x!==state.sel),level:b.dataset.sig,at:Date.now()});
-    store.set('rm-signals',state.signals);state.slot=0;recompute();});
+    const t=new Date();state.hist=state.hist.filter(x=>x.at>Date.now()-60*864e5).concat([{cell:state.sel,dk:dayKind(t),h:t.getHours(),level:b.dataset.sig,at:t.getTime()}]);
+    store.set('rm-signals',state.signals);store.set('rm-sighist',state.hist);state.slot=0;recompute();});
   $('#locBtn').addEventListener('click',()=>{
     if(!navigator.geolocation){$('#locBtn').textContent='Position indisponible';return;}
     $('#locBtn').textContent='Localisation…';
