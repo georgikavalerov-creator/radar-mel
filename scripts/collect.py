@@ -8,6 +8,7 @@
   events.json    agenda Zénith, Lille Grand Palais et matchs du LOSC à domicile (une fois par jour)
   charging.json  occupation des bornes de recharge de la MEL (temps réel)
   irve_mel.json  position et puissance des points de charge de la MEL (une fois par jour)
+  roads.json     voies rapides de la MEL : temps de parcours des panneaux et état des tronçons (DIR Nord, temps réel)
   baseline.json  historique appris : moyenne et écart-type par station, type de jour et heure
   anomaly.json   l'historique pour l'heure en cours et la suivante, lu par l'appli
 Aucune clé d'API n'est nécessaire.
@@ -27,6 +28,10 @@ IRVE_DYN = 'https://proxy.transport.data.gouv.fr/resource/consolidation-national
 GEO = 'https://data.lillemetropole.fr/geoserver/ogc/features/v1/collections/'
 VL_URL = GEO + 'dsp_ilevia:vlille_temps_reel/items?f=json&limit=1000'
 PK_URL = GEO + 'mel_mobilite_et_transport:parking/items?f=json&limit=200'
+TP_URL = 'https://tipi.bison-fute.gouv.fr/bison-fute-ouvert/publicationsDIR/TP-DIR/TraficLille_DataTRP.xml'
+TC_DIR = 'https://tipi.bison-fute.gouv.fr/bison-fute-ouvert/publicationsDIR/TRAFICOLOR-DIR/TraficLille/'
+MEL_ROADS = {'0001': 'A1', '0022': 'A22', '0023': 'A23', '0025': 'A25', '0027': 'A27', '0041': 'N41', '0227': 'N227', '0356': 'N356'}
+LAST_TP = {}  # temps de parcours du passage en cours, réutilisés par l'historique
 MONTHS = {'janv': 1, 'janvier': 1, 'févr': 2, 'février': 2, 'mars': 3, 'avr': 4, 'avril': 4, 'mai': 5, 'juin': 6,
           'juil': 7, 'juillet': 7, 'août': 8, 'sept': 9, 'septembre': 9, 'oct': 10, 'octobre': 10,
           'nov': 11, 'novembre': 11, 'déc': 12, 'décembre': 12}
@@ -209,6 +214,41 @@ def charging(out):
     return {'stations': stations, 'total': total}
 
 
+# ---------- Voies rapides (DIR Nord) ----------
+def road_of(site):
+    m = re.match(r'(?:TA|TN)?(\d{4})', site)
+    return m.group(1) if m else ''
+
+
+def roads(out):
+    """Temps de parcours affichés sur les panneaux et état des tronçons, regroupés par voie de la MEL."""
+    tp = {sid: float(d) for sid, d in re.findall(r'measurementSiteReference id="([^"]+)".*?<duration>([\d.]+)<',
+                                                 get(TP_URL).decode('utf-8', 'replace'), re.S)}
+    LAST_TP.clear()
+    LAST_TP.update(tp)
+    files = sorted(set(re.findall(r'TraficLille_DataTRT_\d+_\d+\.xml', get(TC_DIR).decode('utf-8', 'replace'))))
+    status = re.findall(r'measurementSiteReference id="([^"]+)".*?<trafficStatusValue>(\w+)<',
+                        get(TC_DIR + files[-1]).decode('utf-8', 'replace'), re.S) if files else []
+    try:
+        with open(os.path.join(out, 'baseline.json'), encoding='utf-8') as fh:
+            hist = json.load(fh).get('tp', {})
+    except (OSError, ValueError):
+        hist = {}
+    res = {code: {'road': name, 'free': 0, 'heavy': 0, 'cong': 0, 'imp': 0, 'tp': []} for code, name in MEL_ROADS.items()}
+    keys = {'freeFlow': 'free', 'heavy': 'heavy', 'congested': 'cong', 'impossible': 'imp'}
+    for sid, st in status:
+        r = res.get(road_of(sid))
+        if r and st in keys:
+            r[keys[st]] += 1
+    for sid, d in tp.items():
+        r = res.get(road_of(sid))
+        if r:
+            # temps « fluide » : la plus basse des moyennes apprises par créneau (au moins 3 relevés)
+            means = [v[0] for v in hist.get(sid, {}).values() if v[2] >= 3]
+            r['tp'].append({'id': sid, 's': d, 'ff': round(min(means + [d]), 1)})
+    return {'roads': list(res.values()), 'segments': len(status)}
+
+
 # ---------- Historique appris (lignes de base) ----------
 def easter(y):
     a, b, c = y % 19, y // 100, y % 100
@@ -236,7 +276,7 @@ def slot_of(t):
 
 def observe(out):
     """Valeurs du moment : vélos par station V'Lille, taux d'occupation des parkings et des bornes de recharge."""
-    obs = {'vl': {}, 'pk': {}, 'ch': {}}
+    obs = {'vl': {}, 'pk': {}, 'ch': {}, 'tp': dict(LAST_TP)}
     for f in json.loads(get(VL_URL)).get('features', []):
         p = f.get('properties') or {}
         if p.get('etat') == 'EN SERVICE' and p.get('etat_connexion') == 'CONNECTÉ':
@@ -265,12 +305,12 @@ def baselines(out):
             base = json.load(fh)
     except (OSError, ValueError):
         base = {}
-    for kind in ('vl', 'pk', 'ch'):
+    for kind in ('vl', 'pk', 'ch', 'tp'):
         base.setdefault(kind, {})
     t = now()
     cur, nxt = slot_of(t), slot_of(t + dt.timedelta(hours=1))
     obs = observe(out)
-    view = {'slots': [cur, nxt], 'vl': {}, 'pk': {}, 'ch': {}}
+    view = {'slots': [cur, nxt], 'vl': {}, 'pk': {}, 'ch': {}, 'tp': {}}
     for kind, values in obs.items():
         for key, x in values.items():
             rec = base[kind].setdefault(key, {})
@@ -405,6 +445,7 @@ def main():
     if a.daily or stale(a.out, 'irve_mel.json'):
         jobs.append(('irve_mel.json', irve_static))
     jobs.append(('charging.json', lambda: charging(a.out)))
+    jobs.append(('roads.json', lambda: roads(a.out)))
     jobs.append(('anomaly.json', lambda: baselines(a.out)))
     failed = 0
     for name, fn in jobs:

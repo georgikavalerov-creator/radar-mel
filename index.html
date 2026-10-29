@@ -166,7 +166,7 @@ ol.top .km{font-family:var(--f-data);font-size:12px;color:var(--muted)}
       <h2>Ce que mesure le score</h2>
       <ul>
         <li><b>Toutes les 2 minutes, par votre téléphone</b> : vélos V'Lille par station, places libres des parkings MEL, perturbations ilévia (grèves comprises) ; météo au quart d'heure (Open-Meteo) toutes les 10 minutes.</li>
-        <li><b>Toutes les 5 à 10 minutes, par le robot de collecte</b> : retards et suppressions de trains à Lille Flandres et Lille Europe (temps réel SNCF), accidents, bouchons et fermetures de voies (Bison Futé), occupation des 4 000 points de charge de la MEL (base nationale IRVE). Quand les bornes rapides sont pleines, une partie des chauffeurs électriques recharge : moins de chauffeurs disponibles.</li>
+        <li><b>Toutes les 5 à 10 minutes, par le robot de collecte</b> : retards et suppressions de trains à Lille Flandres et Lille Europe (temps réel SNCF), temps de parcours affichés sur les panneaux et état des 357 tronçons de voies rapides autour de Lille (DIR Nord), accidents et fermetures de voies (Bison Futé), occupation des 4 000 points de charge de la MEL (base nationale IRVE). Quand les bornes rapides sont pleines, une partie des chauffeurs électriques recharge : moins de chauffeurs disponibles.</li>
         <li><b>Chaque jour</b> : horaires SNCF des 48 prochaines heures, agenda du Zénith et de Lille Grand Palais, matchs du LOSC, jours fériés, vacances scolaires de l'académie de Lille, stations de métro et de tram.</li>
         <li><b>Grèves et circulation</b> : détectées sans intervention, à partir des messages ilévia (grève, bus déviés pour accident ou bouchon), des trains supprimés et des événements Bison Futé.</li>
         <li><b>Demande habituelle</b> par quartier, heure et jour : jeudi soir étudiant, gares le vendredi et le dimanche soir, sorties de bureaux, fin du métro.</li>
@@ -354,7 +354,7 @@ function anchorDemand(a,si,ctx){
 }
 
 /* ---------- État ---------- */
-const D={vl:[],vlHist:store.get('rm-vlhist',[]),park:[],pert:[],metro:[],tram:[],trains:[],traffic:[],autoEvents:[],charge:[],chargeTotal:null,base:null,W:null};
+const D={vl:[],vlHist:store.get('rm-vlhist',[]),park:[],pert:[],metro:[],tram:[],trains:[],traffic:[],autoEvents:[],charge:[],chargeTotal:null,base:null,roads:null,W:null};
 const SRC={};
 const state={events:store.get('rm-events',[]),signals:store.get('rm-signals',[]),hist:store.get('rm-sighist',[]),slot:0,sel:null,pos:null};
 /* Créneau d'historique, identique à celui du robot : sem (lundi à jeudi), ven, sam, dim ou férié, plus l'heure. */
@@ -363,7 +363,9 @@ const slotOf=t=>dayKind(t)+'-'+pad(t.getHours());
 function baseOf(kind,key,t){const B=D.base;if(!B||!B[kind]) return null;const i=B.slots.indexOf(slotOf(t)),r=B[kind][key];return i>=0&&r&&r[i]?r[i]:null;}
 const scoreOf=p=>Math.max(0,Math.min(99,Math.round(100*(1-Math.exp(-p/7)))));
 /* Conditions détectées automatiquement (grève, trains supprimés, circulation). */
-const AUTO={ilevia:'',cancel:{},jam:1,jamTxt:'',chargeF:1,chargeTxt:''};
+const AUTO={ilevia:'',cancel:{},jam:1,jamTxt:'',chargeF:1,chargeTxt:'',roadsOk:false,anchorF:[],cityF:1,roadTxt:'',roadList:[]};
+/* Voies rapides qui desservent chaque quartier : leurs bouchons bloquent les chauffeurs de ce secteur. */
+const ROAD_ANCHORS={A1:['gares','euralille','fives','chu','lesquin'],A22:['roubaix','tourcoing','marcq','v2','madeleine'],A23:['vda','fives','lesquin','v2'],A25:['lomme','wazemmes','solf','chu'],A27:['vda','v2'],N41:['lomme','chu','wazemmes'],N227:['vda','v2','fives'],N356:['marcq','madeleine','v2','roubaix','euralille']};
 /* Données du robot : branche « data » du dépôt une fois en ligne, dossier data/ en local. */
 const DATA_BASE=(()=>{const h=location.hostname;if(h.endsWith('.github.io')){const owner=h.split('.')[0],repo=location.pathname.split('/')[1]||h;return 'https://raw.githubusercontent.com/'+owner+'/'+repo+'/data/';}return 'data/';})();
 let cells=[],SL=[],lastRefresh=0,busy=false,map=null,canvas=null,posMarker=null;
@@ -414,7 +416,10 @@ function loadMeteo(){return getJSON('https://api.open-meteo.com/v1/forecast?lati
 function age(u){const d=parseLocal(u);if(!d) return '';const m=Math.round((Date.now()-d)/6e4);return m<=1?'':m<90?', il y a '+m+' min':', '+DAYS[d.getDay()]+' '+fmtHM(d);}
 function loadBot(){
   const g=n=>getJSON(DATA_BASE+n+'?t='+Math.floor(Date.now()/6e4)).catch(()=>null);
-  return Promise.all([g('schedule.json'),g('rt.json'),g('traffic.json'),g('events.json'),g('charging.json'),g('anomaly.json')]).then(([sc,rt,tf,ev,ch,an])=>{
+  return Promise.all([g('schedule.json'),g('rt.json'),g('traffic.json'),g('events.json'),g('charging.json'),g('anomaly.json'),g('roads.json')]).then(([sc,rt,tf,ev,ch,an,rd])=>{
+    const rdAge=rd?Date.now()-(parseLocal(rd.updated)||0):1e12;
+    D.roads=rd&&rdAge<25*6e4?rd:null;
+    SRC.roads={ok:!!D.roads,label:'Voies rapides DIR Nord',info:D.roads?D.roads.segments+' tronçons, temps des panneaux'+age(rd.updated):rd?'données trop anciennes':'pas encore collecté'};
     D.base=an&&an.slots?an:null;
     const ns=an&&an.vl?Object.values(an.vl).map(r=>r[0]&&r[0][2]).filter(Boolean).sort((a,b)=>a-b):[];
     SRC.hist={ok:!!ns.length,label:'Historique appris',info:ns.length?ns[ns.length>>1]+' relevés par station à cette heure':'en cours de constitution'};
@@ -454,7 +459,22 @@ function computeAuto(){
   const T=D.chargeTotal,share=T&&T.fast?T.fastOcc/T.fast:0;
   AUTO.chargeF=share>.35?Math.max(.88,1-(share-.35)*.5):1;
   AUTO.chargeTxt=share>.35?'bornes rapides occupées à '+Math.round(share*100)+' %':'';
+  /* Congestion mesurée par voie : part pondérée des tronçons chargés (0,5), saturés (1) ou bloqués (1,5),
+     ou écart du temps de parcours des panneaux au temps fluide appris, la plus forte des deux. */
+  AUTO.roadsOk=!!D.roads;AUTO.roadList=[];
+  if(D.roads){
+    let tot=0,wsum=0;const C={};
+    D.roads.roads.forEach(r=>{const known=r.free+r.heavy+r.cong+r.imp;if(!known&&!r.tp.length) return;
+      const cs=known?Math.min(1,(.5*r.heavy+r.cong+1.5*r.imp)/known):0;
+      const ratios=r.tp.filter(t=>t.ff>0).map(t=>t.s/t.ff).sort((a,b)=>a-b),ratio=ratios.length?ratios[ratios.length>>1]:1;
+      const cv=Math.max(cs,Math.min(1,Math.max(0,(ratio-1)/1.5)));C[r.road]=cv;tot+=cv*(known||1);wsum+=known||1;
+      AUTO.roadList.push({road:r.road,c:cv,loaded:r.heavy+r.cong+r.imp,known,ratio});});
+    const city=wsum?tot/wsum:0;AUTO.cityF=1-.3*city;
+    AUTO.anchorF=ANCHORS.map(a=>{const rs=Object.keys(ROAD_ANCHORS).filter(k=>ROAD_ANCHORS[k].includes(a.id)&&C[k]!=null);return rs.length?1-.3*rs.reduce((m,k)=>m+C[k],0)/rs.length:AUTO.cityF;});
+    AUTO.roadTxt=AUTO.roadList.filter(r=>r.c>=.15).sort((a,b)=>b.c-a.c).map(r=>r.road+' '+(r.c>=.6?'saturée':r.c>=.3?'chargée':'dense')).join(', ');
+  }
 }
+const roadLabel=c=>c>=.6?'saturée':c>=.3?'chargée':c>=.1?'dense':'fluide';
 function seatsFor(m){return /ouigo/.test(m)?1000:/eurostar/.test(m)?750:/tgv|inoui|grande vitesse/.test(m)?550:/intercit/.test(m)?400:/ter|express r/.test(m)?250:300;}
 function loadStops(){return Promise.all([
   cached('rm-metro',24*7,GEO+'mel_mobilite_et_transport:stations_metro/items?f=json&limit=500'),
@@ -599,10 +619,13 @@ function calc(c,s,detail){
   if(AUTO.ilevia){mult*=strK;F&&F.push({t:AUTO.ilevia,sub:'détectée dans les messages ilévia',v:'× '+fr(strK,2)});}
   c.tr.forEach(x=>{const k=AUTO.cancel[x.sid];if(!k||k.c<2||x.w!==1) return;const m=1+Math.min(.35,k.c/Math.max(1,k.n));mult*=m;
     F&&F.push({t:'Trains supprimés à '+STATIONS[x.sid].name,sub:k.c+' sur '+k.n+' dans les 3 h (temps réel SNCF)',v:'× '+fr(m,2)});});
-  const avail=S.sup*S.tf*AUTO.jam*AUTO.chargeF*(S.w.snow?.75:1),supply=avail*supK;
+  /* Bouchons : mesurés sur les voies rapides du secteur pour maintenant, mélangés au modèle horaire pour les heures suivantes. */
+  const wsA=c.aw.reduce((m,x)=>m+x.w,0),rf=wsA&&AUTO.anchorF.length?c.aw.reduce((m,x)=>m+x.w*AUTO.anchorF[x.i],0)/wsA:AUTO.cityF;
+  const kr=[1,.5,.2,0][s],tfEff=AUTO.roadsOk?(s===0?rf:S.tf*(1-kr)+rf*kr):S.tf;
+  const avail=S.sup*tfEff*AUTO.jam*AUTO.chargeF*(S.w.snow?.75:1),supply=avail*supK;
   const demand=base+add,score=scoreOf(demand*mult/supply);
   if(F){
-    F.push({t:'Chauffeurs disponibles estimés',sub:(S.tf<1?'bouchons de l’heure de pointe, ':'')+(AUTO.jam<1?AUTO.jamTxt+', ':'')+(AUTO.chargeF<1?AUTO.chargeTxt+', ':'')+'1 = niveau moyen'+(supK>1.08?' ; file d’attente probable':''),v:fr(supply,2)});
+    F.push({t:'Chauffeurs disponibles estimés',sub:(AUTO.roadsOk?(tfEff<.98?'trafic mesuré × '+fr(tfEff,2)+(AUTO.roadTxt?' ('+AUTO.roadTxt+')':'')+', ':'voies rapides fluides, '):(S.tf<1?'bouchons de l’heure de pointe, ':''))+(AUTO.jam<1?AUTO.jamTxt+', ':'')+(AUTO.chargeF<1?AUTO.chargeTxt+', ':'')+'1 = niveau moyen'+(supK>1.08?' ; file d’attente probable':''),v:fr(supply,2)});
   }
   return {score,F,top,demand,mult,supply};
 }
@@ -676,7 +699,8 @@ function renderLive(){
   if(D.park.length){const top=D.park.filter(p=>p.open).sort((a,b)=>b.occ-a.occ).slice(0,4);
     out.push('<div><h3>Parkings les plus pleins</h3><ul>'+top.map(p=>'<li>'+esc(p.name)+' : <span class="big">'+Math.round(p.occ*100)+' %</span> ('+p.free+' libres)</li>').join('')+'</ul></div>');}
   const heavy=D.pert.filter(p=>p.mode!=='bus'&&p.sev!=='info'),bus=D.pert.filter(p=>p.mode==='bus').length;
-  out.push('<div><h3>Circulation</h3><p class="hint">'+(AUTO.jamTxt?esc(AUTO.jamTxt)+' : chauffeurs disponibles × '+fr(AUTO.jam,2):'Pas d’accident ni de bouchon signalé autour de Lille.')+'</p></div>');
+  out.push('<div><h3>Circulation</h3>'+(AUTO.roadList.length?'<ul>'+AUTO.roadList.map(r=>'<li><b>'+esc(r.road)+'</b> '+roadLabel(r.c)+(r.known?' : '+r.loaded+' tronçon'+(r.loaded>1?'s':'')+' chargé'+(r.loaded>1?'s':'')+' sur '+r.known:'')+(r.ratio>=1.15?', temps de parcours × '+fr(r.ratio,1):'')+'</li>').join('')+'</ul>':'')
+    +'<p class="hint">'+(AUTO.jamTxt?esc(AUTO.jamTxt)+' : chauffeurs disponibles × '+fr(AUTO.jam,2):'Pas d’accident signalé autour de Lille.')+'</p></div>');
   if(D.chargeTotal){const T=D.chargeTotal,known=T.n-T.unk;
     out.push('<div><h3>Bornes de recharge</h3><p class="hint"><span class="big">'+T.occ+'</span> occupées sur '+known+' points au statut connu ('+(known?Math.round(T.occ/known*100):0)+' %) · bornes rapides : <span class="big">'+T.fastOcc+'</span> sur '+T.fast+(AUTO.chargeF<1?' ; chauffeurs disponibles × '+fr(AUTO.chargeF,2):'')+'</p></div>');}
   if(AUTO.ilevia) out.push('<div><h3>Grève</h3><p class="hint">'+esc(AUTO.ilevia)+' : demande augmentée dans toute la métropole.</p></div>');
@@ -693,7 +717,7 @@ function renderLive(){
   $('#live').innerHTML=out.join('');
 }
 function renderSrc(){
-  const order=['vlille','parking','pert','meteo','trains','traffic','agenda','charge','hist','stops','cal'];
+  const order=['vlille','parking','pert','meteo','trains','roads','traffic','agenda','charge','hist','stops','cal'];
   $('#srcs').innerHTML=order.filter(k=>SRC[k]).map(k=>{const x=SRC[k];return '<span class="src '+(x.ok?'ok':'err')+'" title="'+esc(x.info)+'"><i></i>'+esc(x.label)+' · '+esc(x.info)+'</span>';}).join('');
 }
 function renderEvents(){
