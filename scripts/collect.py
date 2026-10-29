@@ -6,6 +6,8 @@
   traffic.json   événements routiers Bison Futé autour de Lille (temps réel)
   schedule.json  arrivées prévues en gare sur 48 h (GTFS SNCF, une fois par jour)
   events.json    agenda Zénith, Lille Grand Palais et matchs du LOSC à domicile (une fois par jour)
+  charging.json  occupation des bornes de recharge de la MEL (temps réel)
+  irve_mel.json  position et puissance des points de charge de la MEL (une fois par jour)
 Aucune clé d'API n'est nécessaire.
 """
 import argparse, collections, csv, datetime as dt, html, io, json, os, re, sys, urllib.request, zipfile
@@ -18,6 +20,8 @@ BBOX = (50.50, 2.85, 50.80, 3.30)
 GTFS_URL = 'https://eu.ftp.opendatasoft.com/sncf/plandata/Export_OpenData_SNCF_GTFS_NewTripId.zip'
 RT_URL = 'https://proxy.transport.data.gouv.fr/resource/sncf-gtfs-rt-trip-updates'
 BF_URL = 'https://tipi.bison-fute.gouv.fr/bison-fute-ouvert/publicationsDIR/Evenementiel-DIR/grt/RRN/content.xml'
+IRVE_STATIC = 'https://proxy.transport.data.gouv.fr/resource/consolidation-transport-irve-statique'
+IRVE_DYN = 'https://proxy.transport.data.gouv.fr/resource/consolidation-nationale-irve-dynamique'
 MONTHS = {'janv': 1, 'janvier': 1, 'févr': 2, 'février': 2, 'mars': 3, 'avr': 4, 'avril': 4, 'mai': 5, 'juin': 6,
           'juil': 7, 'juillet': 7, 'août': 8, 'sept': 9, 'septembre': 9, 'oct': 10, 'octobre': 10,
           'nov': 11, 'novembre': 11, 'déc': 12, 'décembre': 12}
@@ -156,6 +160,49 @@ def traffic():
     return {'events': out}
 
 
+# ---------- Bornes de recharge (IRVE) ----------
+def irve_static():
+    """Points de charge situés dans la MEL : fichier national lu en flux, seules les lignes de la zone sont gardées."""
+    pts = {}
+    with urllib.request.urlopen(urllib.request.Request(IRVE_STATIC, headers=UA), timeout=300) as r:
+        for row in csv.DictReader(io.TextIOWrapper(r, 'utf-8', errors='replace')):
+            try:
+                lat, lng = float(row['consolidated_latitude']), float(row['consolidated_longitude'])
+            except (TypeError, ValueError):
+                continue
+            if BBOX[0] < lat < BBOX[2] and BBOX[1] < lng < BBOX[3] and row.get('id_pdc_itinerance'):
+                try:
+                    kw = float(row.get('puissance_nominale') or 0)
+                except ValueError:
+                    kw = 0
+                kw = kw / 1000 if kw > 1000 else kw  # quelques opérateurs déclarent en watts
+                pts[row['id_pdc_itinerance']] = [round(lat, 5), round(lng, 5), round(kw, 1),
+                                                 row.get('id_station_itinerance') or row.get('nom_station') or '']
+    return {'points': pts}
+
+
+def charging(out):
+    with open(os.path.join(out, 'irve_mel.json'), encoding='utf-8') as f:
+        pts = json.load(f)['points']
+    st = {}
+    for row in csv.DictReader(io.TextIOWrapper(io.BytesIO(get(IRVE_DYN, 120)), 'utf-8', errors='replace')):
+        p = pts.get(row.get('id_pdc_itinerance'))
+        if not p or row.get('etat_pdc') == 'hors_service':
+            continue
+        lat, lng, kw, sid = p
+        s = st.setdefault(sid or '%s,%s' % (lat, lng), {'lat': lat, 'lng': lng, 'n': 0, 'occ': 0, 'unk': 0, 'fast': 0, 'fastOcc': 0})
+        occ = row.get('occupation_pdc') in ('occupe', 'reserve')
+        s['n'] += 1
+        s['occ'] += occ
+        s['unk'] += row.get('occupation_pdc') == 'inconnu'
+        if kw >= 50:
+            s['fast'] += 1
+            s['fastOcc'] += occ
+    stations = list(st.values())
+    total = {k: sum(s[k] for s in stations) for k in ('n', 'occ', 'unk', 'fast', 'fastOcc')}
+    return {'stations': stations, 'total': total}
+
+
 # ---------- Agenda ----------
 def text_of(raw):
     s = raw.decode('utf-8', 'replace')
@@ -267,6 +314,9 @@ def main():
         jobs.append(('schedule.json', schedule))
     if a.daily or stale(a.out, 'events.json'):
         jobs.append(('events.json', events))
+    if a.daily or stale(a.out, 'irve_mel.json'):
+        jobs.append(('irve_mel.json', irve_static))
+    jobs.append(('charging.json', lambda: charging(a.out)))
     failed = 0
     for name, fn in jobs:
         try:
