@@ -183,6 +183,7 @@ ol.top .km{font-family:var(--f-data);font-size:12px;color:var(--muted)}
         <li><b>Grèves et circulation</b> : détectées sans intervention, à partir des messages ilévia (grève, bus déviés pour accident ou bouchon), des trains supprimés et des événements Bison Futé.</li>
         <li><b>Demande habituelle</b> par quartier, heure et jour : jeudi soir étudiant, gares le vendredi et le dimanche soir, sorties de bureaux, fin du métro.</li>
         <li><b>Sièges du groupe Mulliez</b> (Decathlon, Auchan, Leroy Merlin, Boulanger, Kiabi, Norauto, Saint Maclou, Oney, Jules, Nhood, Agapes, Electro Dépôt, Tape à l'œil) : arrivées le matin et départs vers les gares en fin de journée, en semaine. Leurs réunions ne sont pas publiques : si vous en connaissez une, ajoutez-la dans Événements (lieu « Réunion, séminaire »).</li>
+        <li><b>Habitants et revenus</b> : population et niveau de vie de chaque hexagone d'après l'INSEE (Filosofi 2019, carreaux de 200 m, 1,15 million d'habitants). Plus un quartier est peuplé et aisé, plus il génère de courses depuis les logements : départs vers les gares et l'aéroport tôt le matin, sorties le soir, retours du dimanche.</li>
         <li><b>Calcul</b> : chaque station V'Lille, parking et borne est comparée à sa moyenne apprise pour ce type de jour et cette heure (écart en écarts-types). Le radar s'appuie sur ces écarts plutôt que sur les valeurs brutes, de plus en plus à mesure que l'historique grandit. La tendance des vélos vient d'une régression sur 30 minutes, les sorties d'événement suivent une courbe réaliste sur 90 minutes, et chaque hexagone est lissé avec ses 6 voisins. Vos signalements de majoration sont retenus 60 jours et renforcent le même secteur au même moment de la semaine.</li>
         <li><b>Score</b> = demande estimée × multiplicateurs (pluie, panne de métro, majoration signalée) ÷ chauffeurs disponibles estimés. Chaque terme est affiché avec sa valeur.</li>
         <li><b>Limites</b> : Uber et Bolt ne publient ni leurs demandes ni le nombre de chauffeurs connectés, et la SNCF ne publie pas le remplissage des trains. Les voyageurs sont estimés à partir du type de train (places × 70 % en TGV, 35 % en TER, dont 40 % qui descendent quand Lille n'est pas le terminus). Le score reste une estimation, pas une mesure exacte.</li>
@@ -223,6 +224,8 @@ const P={
   student:{lun:[0,0,0,0,0,1, 1,1,1,1,1,1, 2,2,2,2,2,2, 2,2,1,1,0,0],sem:[0,0,0,0,0,1, 1,1,1,1,1,2, 2,3,4,4,5,5, 5,6,5,3,1,0],jeu:[0,0,0,0,0,1, 1,1,1,1,2,2, 3,4,6,7,8,9, 9,10,10,8,5,2],ven:[1,1,0,0,0,1, 1,1,1,1,1,2, 2,3,3,4,4,5, 5,6,6,5,3,1],sam:[1,0,0,0,0,1, 1,1,1,1,1,2, 2,3,4,4,5,6, 6,7,7,6,4,2],dim:[1,0,0,0,0,0, 1,1,1,1,1,1, 1,1,1,1,1,1, 1,1,0,0,0,0]},
   shopping:{sem:[1,2,3,3,4,5, 6,6,5,5,6,7, 7,6,4,2,1,1, 0,0,0,0,0,0],ven:[1,2,3,3,4,5, 6,6,6,6,7,7, 7,6,5,3,2,1, 0,0,0,0,0,0],sam:[1,1,2,3,5,6, 7,7,8,8,8,8, 7,6,4,3,2,1, 0,0,0,0,0,0],dim:[0,1,1,2,3,4, 5,5,5,5,5,4, 3,2,1,1,0,0, 0,0,0,0,0,0]},
   corporate:{lun:[1,5,7,4,2,2, 2,3,2,2,3,5, 5,3,1,0,0,0, 0,0,0,0,0,0],sem:[1,4,6,4,2,2, 2,3,2,2,3,5, 5,3,1,0,0,0, 0,0,0,0,0,0],ven:[1,4,5,3,2,2, 2,3,3,4,4,3, 2,1,0,0,0,0, 0,0,0,0,0,0],sam:[0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0],dim:[0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0]},
+  /* Départs depuis les logements : gares et aéroport tôt le matin, sorties le soir, retours vers les gares le dimanche. */
+  residential:{sem:[5,6,5,3,2,2, 2,2,2,2,2,2, 2,2,2,2,1,1, 0,0,0,0,1,3],ven:[5,6,5,3,2,2, 2,2,2,2,3,3, 3,4,4,3,2,1, 1,0,0,0,1,3],sam:[2,2,3,3,3,3, 3,3,3,3,3,3, 3,4,4,4,3,2, 1,1,1,0,0,1],dim:[1,1,2,2,3,3, 3,3,3,3,4,4, 4,3,3,2,2,1, 0,0,0,0,1,3]},
   hospital:{sem:[4,4,3,3,3,3, 4,4,4,4,4,4, 4,4,3,2,2,2, 1,1,1,1,1,2],sam:[3,3,3,3,3,3, 4,4,4,4,4,4, 4,3,3,2,2,1, 1,1,1,1,1,2],dim:[3,3,3,3,3,3, 4,4,4,4,4,4, 4,3,3,2,2,1, 1,1,1,1,1,2]}
 };
 const prof=(type,kind)=>P[type][kind]||P[type].sem;
@@ -366,7 +369,7 @@ function anchorDemand(a,si,ctx){
 }
 
 /* ---------- État ---------- */
-const D={vl:[],vlHist:store.get('rm-vlhist',[]),park:[],pert:[],metro:[],tram:[],trains:[],traffic:[],autoEvents:[],charge:[],chargeTotal:null,base:null,roads:null,W:null};
+const D={vl:[],vlHist:store.get('rm-vlhist',[]),park:[],pert:[],metro:[],tram:[],trains:[],traffic:[],autoEvents:[],charge:[],chargeTotal:null,base:null,roads:null,demo:null,W:null};
 const SRC={};
 const state={events:store.get('rm-events',[]),signals:store.get('rm-signals',[]),hist:store.get('rm-sighist',[]),slot:0,sel:null,pos:null};
 /* Créneau d'historique, identique à celui du robot : sem (lundi à jeudi), ven, sam, dim ou férié, plus l'heure. */
@@ -496,6 +499,11 @@ function loadStops(){return Promise.all([
   D.tram=(t.features||[]).filter(f=>f.geometry).map(f=>({name:f.properties.libelle||f.properties.nom_statio,lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]}));
   return D.metro.length+' métro, '+D.tram.length+' tram';
 });}
+/* Habitants et niveau de vie par hexagone, préparés une fois par scripts/build_demo.py (INSEE Filosofi, carreaux de 200 m). */
+function loadDemo(){return getJSON('demo.json').then(d=>{
+  D.demo=d;cells.forEach(c=>{const v=d.cells[c.id];c.pop=v?v[0]:0;c.inc=v?v[1]:0;});
+  return fr(d.pop,0)+' habitants, niveau de vie moyen '+fr(d.inc,0)+' €';
+});}
 function loadCalendar(){
   const today=ymd(new Date());
   return Promise.all([
@@ -594,6 +602,11 @@ function calc(c,s,detail){
   if(F){const R=[];if(top>=0){baseReasons(ANCHORS[top].mix,S.si,S.ctx,R);S.sp[top].forEach(x=>R.push(x));}R.sort((a,b)=>b.w-a.w);
     F.push({t:'Demande habituelle'+(top>=0?' · '+ANCHORS[top].name:''),sub:DAYS[S.t.getDay()]+' '+S.t.getHours()+'h'+(R.length?' : '+R.slice(0,2).map(r=>r.t).join(', '):''),v:fr(base,1)});}
   let add=0;const kv=[1,.5,.2,0][s];
+  /* Demande des habitants (INSEE) : densité plafonnée à 5 000 habitants par hexagone, et usage du VTC qui croît
+     avec le niveau de vie (rapport à la moyenne MEL puissance 1,3, borné entre 0,5 et 2,2). */
+  if(c.pop&&D.demo){const incF=Math.min(2.2,Math.max(.5,Math.pow(c.inc/D.demo.inc,1.3))),dens=Math.min(1.2,c.pop/5000);
+    const v=(prof('residential',S.si.kind)[S.si.idx]||0)*dens*incF*.6;
+    if(v>=.05){add+=v;F&&F.push({t:'Habitants : '+fr(Math.round(c.pop/50)*50,0)+' · niveau de vie '+fr(Math.round(c.inc/100)*100,0)+' € par an',sub:'× '+fr(c.inc/D.demo.inc,1)+' la moyenne de la MEL (INSEE) ; départs vers les gares et l’aéroport, sorties du soir',v:'+'+fr(v,1)});}}
   const conf=c.vlA?Math.min(1,c.vlA.nmin/30):0;
   if(c.vlA&&kv&&c.vlA.z>=1.5&&c.vlA.def>=3){const v=Math.min(3,(c.vlA.z-1)*.8)*kv;add+=v;
     F&&F.push({t:'V’Lille : '+fr(c.vlA.def,0)+' vélos de moins que d’habitude',sub:'pour ce type de jour à cette heure : +'+fr(c.vlA.z,1)+' écarts-types, '+c.vlA.nmin+' relevés appris',v:'+'+fr(v,1)});}
@@ -699,7 +712,7 @@ function renderDetail(){
 }
 function renderTop(){
   const s=state.slot;
-  $('#top').innerHTML=topCells(s,6).map(c=>{const r=calc(c,s,true),why=r.F.slice(1).filter(f=>!/^Chauffeurs|^Pression/.test(f.t)).slice(0,2).map(f=>f.t);
+  $('#top').innerHTML=topCells(s,6).map(c=>{const r=calc(c,s,true),why=r.F.slice(1).filter(f=>!/^Chauffeurs|^Pression|^Habitants/.test(f.t)).slice(0,2).map(f=>f.t);
     if(!why.length&&r.F[0]) why.push(r.F[0].sub||r.F[0].t);
     const dist=state.pos?fr(km(state.pos.lat,state.pos.lng,c.lat,c.lng),1)+' km':'';
     return '<li><button type="button" data-cell="'+c.id+'" aria-current="'+(c.id===state.sel)+'"><span class="n" style="background:'+color(c.sc[s])+'">'+c.sc[s]+'</span><span class="nm">'+esc(c.name)+'<span class="why">'+esc(why.join(' · '))+'</span></span><span class="km">'+dist+'</span></button></li>';}).join('');
@@ -730,7 +743,7 @@ function renderLive(){
   $('#live').innerHTML=out.join('');
 }
 function renderSrc(){
-  const order=['vlille','parking','pert','meteo','trains','roads','traffic','agenda','charge','hist','stops','cal'];
+  const order=['vlille','parking','pert','meteo','trains','roads','traffic','agenda','charge','hist','demo','stops','cal'];
   const all=order.filter(k=>SRC[k]),ok=all.filter(k=>SRC[k].ok).length,sum=$('#srcSum');
   sum.className=ok<all.length?'warn':'';sum.innerHTML='<i></i>'+ok+' sources sur '+all.length+' à jour'+(ok<all.length?' : '+esc(all.filter(k=>!SRC[k].ok).map(k=>SRC[k].label).join(', '))+' en attente':'');
   $('#srcs').innerHTML=all.map(k=>{const x=SRC[k];return '<span class="src '+(x.ok?'ok':'err')+'" title="'+esc(x.info)+'"><i></i>'+esc(x.label)+' · '+esc(x.info)+'</span>';}).join('');
@@ -838,7 +851,7 @@ function init(){
   $('#evList').addEventListener('click',e=>{const b=e.target.closest('button[data-ev]');if(!b) return;state.events=state.events.filter(x=>x.id!==b.dataset.ev);store.set('rm-events',state.events);renderEvents();recompute();});
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&Date.now()-lastRefresh>REFRESH_MS) refresh();});
 
-  Promise.all([run('stops','Arrêts',loadStops),run('cal','Calendrier',loadCalendar)]).then(refresh);
+  Promise.all([run('stops','Arrêts',loadStops),run('cal','Calendrier',loadCalendar),run('demo','Population INSEE',loadDemo)]).then(refresh);
   setInterval(tickClock,1000);
 }
 init();
